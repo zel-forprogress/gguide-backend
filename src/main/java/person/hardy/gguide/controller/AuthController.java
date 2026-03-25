@@ -1,10 +1,10 @@
 package person.hardy.gguide.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import person.hardy.gguide.model.dto.AuthRequestDTO;
 import person.hardy.gguide.model.entity.User;
+import person.hardy.gguide.model.vo.ResultVO;
 import person.hardy.gguide.service.AuthService;
 
 import java.util.Map;
@@ -17,25 +17,16 @@ public class AuthController {
     @Autowired
     private AuthService authService;
 
+
     @PostMapping("/register")
-    public ResponseEntity<?> registerUser(@RequestBody AuthRequestDTO request) {
-        try {
-            User user = authService.register(request.getUsername(), request.getPassword());
-            // 实际项目中，这里应该生成并返回一个 JWT Token
-            return ResponseEntity.ok(Map.of("message", "注册成功", "userId", user.getId()));
-        } catch (RuntimeException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
+    public ResultVO<?> registerUser(@RequestBody AuthRequestDTO request) {
+        User user = authService.register(request.getUsername(), request.getPassword());
+        return ResultVO.success("注册成功", user.getId());
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> loginUser(@RequestBody AuthRequestDTO request) {
-        try {
-            User user = authService.login(request.getUsername(), request.getPassword());
-            // 实际项目中，这里应该生成并返回一个 JWT Token
-            return ResponseEntity.ok(Map.of("message", "登录成功", "token", "fake-jwt-token-for-" + user.getUsername()));
-        } catch (RuntimeException e) {
-            return ResponseEntity.status(401).body(Map.of("error", e.getMessage()));
-        }
+    public ResultVO<?> loginUser(@RequestBody AuthRequestDTO request) {
+        String token = authService.login(request.getUsername(), request.getPassword());
+        return ResultVO.success("登录成功", Map.of("token", token));
     }
 }
