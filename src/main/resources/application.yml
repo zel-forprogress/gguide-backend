@@ -2,5 +2,4 @@ spring:
   application:
     name: gguide
   mongodb:
-    database: ${env.MONGO_DATABASE}
-    uri: mongodb+srv://${env.MONGO_USERNAME}:${env.MONGO_PASSWORD}@${env.MONGO_CLUSTER}
+    uri: mongodb+srv://${ONGO_USERNAME}:${env.MONGO_PASSWORD}@${env.MONGO_CLUSTER}/${env.MONGO_DATABASE}
