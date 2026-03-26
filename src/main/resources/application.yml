@@ -1,6 +1,8 @@
 spring:
   application:
     name: gguide
+  mongodb:
+    uri: mongodb+srv://${env.MONGO_USERNAME}:${env.MONGO_PASSWORD}@${env.MONGO_CLUSTER}/${env.MONGO_DATABASE}?retryWrites=true&w=majority
   #热加载
   devtools:
     restart:
@@ -8,9 +10,6 @@ spring:
       poll-interval: 2s
     livereload:
       enabled: true
-  mongodb:
-    uri: mongodb+srv://${env.MONGO_USERNAME}:${env.MONGO_PASSWORD}@${env.MONGO_CLUSTER}/${env.MONGO_DATABASE}
-
 logging:
   level:
     root: INFO
