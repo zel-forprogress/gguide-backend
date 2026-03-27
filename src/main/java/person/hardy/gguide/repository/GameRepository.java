@@ -11,4 +11,6 @@ public interface GameRepository extends MongoRepository<Game, String> {
     List<Game> findByCategory(String category);
 
     List<Game> findByTitleContainingIgnoreCase(String title);
+
+    boolean existsByTitle(String title);
 }

@@ -28,6 +28,9 @@ public class GameService {
     }
 
     public GameDTO createGame(GameDTO gameDTO) {
+        if (gameRepository.existsByTitle(gameDTO.getTitle())) {
+            throw new RuntimeException("游戏名称已存在");
+        }
         Game game = new Game();
         game.setTitle(gameDTO.getTitle());
         game.setDescription(gameDTO.getDescription());
