@@ -1,6 +1,9 @@
 spring:
   application:
     name: gguide
+  output:
+    ansi:
+      enabled: ALWAYS
   mongodb:
     uri: mongodb+srv://${env.MONGO_USERNAME}:${env.MONGO_PASSWORD}@${env.MONGO_CLUSTER}/${env.MONGO_DATABASE}?retryWrites=true&w=majority
   #热加载
