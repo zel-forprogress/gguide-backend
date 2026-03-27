@@ -27,6 +27,12 @@ public class GameService {
                 .collect(Collectors.toList());
     }
 
+    public GameDTO getGameById(String id) {
+        Game game = gameRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("游戏不存在"));
+        return convertToDTO(game);
+    }
+
     public GameDTO createGame(GameDTO gameDTO) {
         if (gameRepository.existsByTitle(gameDTO.getTitle())) {
             throw new RuntimeException("游戏名称已存在");

@@ -26,6 +26,11 @@ public class GameController {
         return ResultVO.success(gameService.getByCategory(category));
     }
 
+    @GetMapping("/{id}")
+    public ResultVO<GameDTO> getGameById(@PathVariable String id) {
+        return ResultVO.success(gameService.getGameById(id));
+    }
+
     @PostMapping
     public ResultVO<GameDTO> createGame(@RequestBody GameDTO gameDTO) {
         return ResultVO.success("创建成功", gameService.createGame(gameDTO));
