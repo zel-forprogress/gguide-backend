@@ -2,11 +2,13 @@ package person.hardy.gguide.service;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import person.hardy.gguide.model.entity.Game;
 import person.hardy.gguide.model.dto.GameDTO;
+import person.hardy.gguide.model.entity.Game;
 import person.hardy.gguide.repository.GameRepository;
 
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -29,14 +31,15 @@ public class GameService {
 
     public GameDTO getGameById(String id) {
         Game game = gameRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("游戏不存在"));
+                .orElseThrow(() -> new RuntimeException("Game not found"));
         return convertToDTO(game);
     }
 
     public GameDTO createGame(GameDTO gameDTO) {
         if (gameRepository.existsByTitle(gameDTO.getTitle())) {
-            throw new RuntimeException("游戏名称已存在");
+            throw new RuntimeException("Game title already exists");
         }
+
         Game game = new Game();
         game.setTitle(gameDTO.getTitle());
         game.setDescription(gameDTO.getDescription());
@@ -49,6 +52,27 @@ public class GameService {
 
         Game saved = gameRepository.save(game);
         return convertToDTO(saved);
+    }
+
+    public List<GameDTO> getGamesByIds(List<String> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        Map<String, Game> gameMap = gameRepository.findAllById(ids).stream()
+                .collect(Collectors.toMap(Game::getId, game -> game));
+
+        return ids.stream()
+                .map(gameMap::get)
+                .filter(game -> game != null)
+                .map(this::convertToDTO)
+                .collect(Collectors.toList());
+    }
+
+    public void ensureGameExists(String gameId) {
+        if (!gameRepository.existsById(gameId)) {
+            throw new RuntimeException("Game not found");
+        }
     }
 
     private GameDTO convertToDTO(Game game) {
