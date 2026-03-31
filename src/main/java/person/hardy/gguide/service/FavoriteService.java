@@ -47,7 +47,7 @@ public class FavoriteService {
             userRepository.save(user);
         }
 
-        return false;
+        return removed;
     }
 
     public boolean isFavorite(String username, String gameId) {
