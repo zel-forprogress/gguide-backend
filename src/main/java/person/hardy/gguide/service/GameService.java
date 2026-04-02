@@ -6,6 +6,7 @@ import person.hardy.gguide.model.dto.GameDTO;
 import person.hardy.gguide.model.entity.Game;
 import person.hardy.gguide.repository.GameRepository;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +25,7 @@ public class GameService {
     }
 
     public List<GameDTO> getByCategory(String category) {
-        return gameRepository.findByCategory(category).stream()
+        return gameRepository.findByCategoriesContaining(category).stream()
                 .map(this::convertToDTO)
                 .collect(Collectors.toList());
     }
@@ -47,7 +48,7 @@ public class GameService {
         game.setCinematicTrailer(gameDTO.getCinematicTrailer());
         game.setDownloadLink(gameDTO.getDownloadLink());
         game.setRating(gameDTO.getRating());
-        game.setCategory(gameDTO.getCategory());
+        game.setCategories(normalizeCategories(gameDTO.getCategories()));
         game.setReleaseDate(gameDTO.getReleaseDate());
 
         Game saved = gameRepository.save(game);
@@ -84,8 +85,19 @@ public class GameService {
         dto.setCinematicTrailer(game.getCinematicTrailer());
         dto.setDownloadLink(game.getDownloadLink());
         dto.setRating(game.getRating());
-        dto.setCategory(game.getCategory());
+        dto.setCategories(normalizeCategories(game.getCategories()));
         dto.setReleaseDate(game.getReleaseDate());
         return dto;
+    }
+
+    private List<String> normalizeCategories(List<String> categories) {
+        if (categories == null || categories.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        return categories.stream()
+                .filter(category -> category != null && !category.isBlank())
+                .distinct()
+                .collect(Collectors.toCollection(ArrayList::new));
     }
 }

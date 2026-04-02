@@ -3,7 +3,10 @@ package person.hardy.gguide.model.entity;
 import lombok.Data;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
+
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 @Document(collection = "games")
@@ -18,13 +21,13 @@ public class Game {
 
     private String coverImage;
 
-    private String cinematicTrailer;//游戏CG
+    private String cinematicTrailer;
 
-    private String downloadLink;//或者官网连接
+    private String downloadLink;
 
     private Double rating;
 
-    private String category;
+    private List<String> categories = new ArrayList<>();
 
     private Instant releaseDate;
 

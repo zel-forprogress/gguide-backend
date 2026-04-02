@@ -8,7 +8,7 @@ import java.util.List;
 
 @Repository
 public interface GameRepository extends MongoRepository<Game, String> {
-    List<Game> findByCategory(String category);
+    List<Game> findByCategoriesContaining(String category);
 
     List<Game> findByTitleContainingIgnoreCase(String title);
 
