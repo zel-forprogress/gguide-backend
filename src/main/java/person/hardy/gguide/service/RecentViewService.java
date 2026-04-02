@@ -20,9 +20,9 @@ public class RecentViewService {
     @Autowired
     private GameService gameService;
 
-    public List<GameDTO> getRecentlyViewedGames(String username) {
+    public List<GameDTO> getRecentlyViewedGames(String username, String locale) {
         User user = getUserByUsername(username);
-        return gameService.getGamesByIds(getRecentlyViewedGameIds(user));
+        return gameService.getGamesByIds(getRecentlyViewedGameIds(user), locale);
     }
 
     public boolean recordRecentView(String username, String gameId) {

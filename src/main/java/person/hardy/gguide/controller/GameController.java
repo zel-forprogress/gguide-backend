@@ -2,6 +2,7 @@ package person.hardy.gguide.controller;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+import person.hardy.gguide.common.util.LocaleUtil;
 import person.hardy.gguide.model.dto.GameDTO;
 import person.hardy.gguide.model.vo.ResultVO;
 import person.hardy.gguide.service.GameService;
@@ -17,18 +18,32 @@ public class GameController {
     private GameService gameService;
 
     @GetMapping
-    public ResultVO<List<GameDTO>> getAllGames() {
-        return ResultVO.success(gameService.getAllGames());
+    public ResultVO<List<GameDTO>> getAllGames(
+            @RequestParam(value = "lang", required = false) String lang,
+            @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage
+    ) {
+        String locale = LocaleUtil.resolveRequestedLocale(lang, acceptLanguage);
+        return ResultVO.success(gameService.getAllGames(locale));
     }
 
     @GetMapping("/category/{category}")
-    public ResultVO<List<GameDTO>> getByCategory(@PathVariable String category) {
-        return ResultVO.success(gameService.getByCategory(category));
+    public ResultVO<List<GameDTO>> getByCategory(
+            @PathVariable String category,
+            @RequestParam(value = "lang", required = false) String lang,
+            @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage
+    ) {
+        String locale = LocaleUtil.resolveRequestedLocale(lang, acceptLanguage);
+        return ResultVO.success(gameService.getByCategory(category, locale));
     }
 
     @GetMapping("/{id}")
-    public ResultVO<GameDTO> getGameById(@PathVariable String id) {
-        return ResultVO.success(gameService.getGameById(id));
+    public ResultVO<GameDTO> getGameById(
+            @PathVariable String id,
+            @RequestParam(value = "lang", required = false) String lang,
+            @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage
+    ) {
+        String locale = LocaleUtil.resolveRequestedLocale(lang, acceptLanguage);
+        return ResultVO.success(gameService.getGameById(id, locale));
     }
 
     @PostMapping

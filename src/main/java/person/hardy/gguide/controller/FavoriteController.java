@@ -9,6 +9,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
+import person.hardy.gguide.common.util.LocaleUtil;
 import person.hardy.gguide.model.dto.GameDTO;
 import person.hardy.gguide.model.vo.ResultVO;
 import person.hardy.gguide.service.FavoriteService;
@@ -24,8 +27,13 @@ public class FavoriteController {
     private FavoriteService favoriteService;
 
     @GetMapping
-    public ResultVO<List<GameDTO>> getFavorites(Authentication authentication) {
-        return ResultVO.success(favoriteService.getFavoriteGames(getCurrentUsername(authentication)));
+    public ResultVO<List<GameDTO>> getFavorites(
+            Authentication authentication,
+            @RequestParam(value = "lang", required = false) String lang,
+            @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage
+    ) {
+        String locale = LocaleUtil.resolveRequestedLocale(lang, acceptLanguage);
+        return ResultVO.success(favoriteService.getFavoriteGames(getCurrentUsername(authentication), locale));
     }
 
     @GetMapping("/{gameId}/status")

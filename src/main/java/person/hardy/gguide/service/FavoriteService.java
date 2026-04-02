@@ -18,9 +18,9 @@ public class FavoriteService {
     @Autowired
     private GameService gameService;
 
-    public List<GameDTO> getFavoriteGames(String username) {
+    public List<GameDTO> getFavoriteGames(String username, String locale) {
         User user = getUserByUsername(username);
-        return gameService.getGamesByIds(getFavoriteGameIds(user));
+        return gameService.getGamesByIds(getFavoriteGameIds(user), locale);
     }
 
     public boolean addFavorite(String username, String gameId) {

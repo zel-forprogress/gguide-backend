@@ -2,12 +2,14 @@ package person.hardy.gguide.service;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import person.hardy.gguide.common.util.GameCategoryCatalog;
+import person.hardy.gguide.common.util.LocaleUtil;
 import person.hardy.gguide.model.dto.GameDTO;
 import person.hardy.gguide.model.entity.Game;
 import person.hardy.gguide.repository.GameRepository;
 
-import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -18,44 +20,63 @@ public class GameService {
     @Autowired
     private GameRepository gameRepository;
 
-    public List<GameDTO> getAllGames() {
+    public List<GameDTO> getAllGames(String locale) {
         return gameRepository.findAll().stream()
-                .map(this::convertToDTO)
+                .map(game -> convertToDTO(game, locale))
                 .collect(Collectors.toList());
     }
 
-    public List<GameDTO> getByCategory(String category) {
-        return gameRepository.findByCategoriesContaining(category).stream()
-                .map(this::convertToDTO)
+    public List<GameDTO> getByCategory(String category, String locale) {
+        String normalizedCategory = GameCategoryCatalog.normalizeCode(category);
+        if (normalizedCategory == null) {
+            return Collections.emptyList();
+        }
+
+        return gameRepository.findByCategoriesContaining(normalizedCategory).stream()
+                .map(game -> convertToDTO(game, locale))
                 .collect(Collectors.toList());
     }
 
-    public GameDTO getGameById(String id) {
+    public GameDTO getGameById(String id, String locale) {
         Game game = gameRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Game not found"));
-        return convertToDTO(game);
+        return convertToDTO(game, locale);
     }
 
     public GameDTO createGame(GameDTO gameDTO) {
-        if (gameRepository.existsByTitle(gameDTO.getTitle())) {
+        Map<String, String> titleI18n = normalizeTranslations(gameDTO.getTitleI18n(), gameDTO.getTitle());
+        Map<String, String> descriptionI18n = normalizeTranslations(gameDTO.getDescriptionI18n(), gameDTO.getDescription());
+        String defaultTitle = LocaleUtil.resolveText(titleI18n, LocaleUtil.LOCALE_ZH_CN);
+
+        if (defaultTitle.isBlank()) {
+            throw new RuntimeException("Game title is required");
+        }
+
+        boolean exists = gameRepository.findAll().stream()
+                .map(Game::getTitleI18n)
+                .filter(map -> map != null && !map.isEmpty())
+                .map(map -> LocaleUtil.resolveText(map, LocaleUtil.LOCALE_ZH_CN))
+                .anyMatch(title -> title.equalsIgnoreCase(defaultTitle));
+
+        if (exists) {
             throw new RuntimeException("Game title already exists");
         }
 
         Game game = new Game();
-        game.setTitle(gameDTO.getTitle());
-        game.setDescription(gameDTO.getDescription());
+        game.setTitleI18n(titleI18n);
+        game.setDescriptionI18n(descriptionI18n);
         game.setCoverImage(gameDTO.getCoverImage());
         game.setCinematicTrailer(gameDTO.getCinematicTrailer());
         game.setDownloadLink(gameDTO.getDownloadLink());
         game.setRating(gameDTO.getRating());
-        game.setCategories(normalizeCategories(gameDTO.getCategories()));
+        game.setCategories(GameCategoryCatalog.normalizeCodes(gameDTO.getCategories()));
         game.setReleaseDate(gameDTO.getReleaseDate());
 
         Game saved = gameRepository.save(game);
-        return convertToDTO(saved);
+        return convertToDTO(saved, LocaleUtil.LOCALE_ZH_CN);
     }
 
-    public List<GameDTO> getGamesByIds(List<String> ids) {
+    public List<GameDTO> getGamesByIds(List<String> ids, String locale) {
         if (ids == null || ids.isEmpty()) {
             return Collections.emptyList();
         }
@@ -66,7 +87,7 @@ public class GameService {
         return ids.stream()
                 .map(gameMap::get)
                 .filter(game -> game != null)
-                .map(this::convertToDTO)
+                .map(game -> convertToDTO(game, locale))
                 .collect(Collectors.toList());
     }
 
@@ -76,28 +97,35 @@ public class GameService {
         }
     }
 
-    private GameDTO convertToDTO(Game game) {
+    private GameDTO convertToDTO(Game game, String locale) {
         GameDTO dto = new GameDTO();
         dto.setId(game.getId());
-        dto.setTitle(game.getTitle());
-        dto.setDescription(game.getDescription());
+        dto.setTitleI18n(normalizeTranslations(game.getTitleI18n(), null));
+        dto.setDescriptionI18n(normalizeTranslations(game.getDescriptionI18n(), null));
+        dto.setTitle(LocaleUtil.resolveText(dto.getTitleI18n(), locale));
+        dto.setDescription(LocaleUtil.resolveText(dto.getDescriptionI18n(), locale));
         dto.setCoverImage(game.getCoverImage());
         dto.setCinematicTrailer(game.getCinematicTrailer());
         dto.setDownloadLink(game.getDownloadLink());
         dto.setRating(game.getRating());
-        dto.setCategories(normalizeCategories(game.getCategories()));
+        dto.setCategories(GameCategoryCatalog.normalizeCodes(game.getCategories()));
+        dto.setCategoryLabels(GameCategoryCatalog.resolveLabels(dto.getCategories(), locale));
         dto.setReleaseDate(game.getReleaseDate());
         return dto;
     }
 
-    private List<String> normalizeCategories(List<String> categories) {
-        if (categories == null || categories.isEmpty()) {
-            return Collections.emptyList();
+    private Map<String, String> normalizeTranslations(Map<String, String> source, String fallback) {
+        Map<String, String> translations = LocaleUtil.normalizeTranslations(source, fallback);
+        if (translations.isEmpty()) {
+            return Collections.emptyMap();
         }
 
-        return categories.stream()
-                .filter(category -> category != null && !category.isBlank())
-                .distinct()
-                .collect(Collectors.toCollection(ArrayList::new));
+        return translations.entrySet().stream()
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        Map.Entry::getValue,
+                        (left, right) -> left,
+                        LinkedHashMap::new
+                ));
     }
 }

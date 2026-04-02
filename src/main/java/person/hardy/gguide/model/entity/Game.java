@@ -6,7 +6,9 @@ import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Data
 @Document(collection = "games")
@@ -15,9 +17,9 @@ public class Game {
     @Id
     private String id;
 
-    private String title;
+    private Map<String, String> titleI18n = new LinkedHashMap<>();
 
-    private String description;
+    private Map<String, String> descriptionI18n = new LinkedHashMap<>();
 
     private String coverImage;
 

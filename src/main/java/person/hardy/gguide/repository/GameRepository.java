@@ -9,8 +9,4 @@ import java.util.List;
 @Repository
 public interface GameRepository extends MongoRepository<Game, String> {
     List<Game> findByCategoriesContaining(String category);
-
-    List<Game> findByTitleContainingIgnoreCase(String title);
-
-    boolean existsByTitle(String title);
 }
