@@ -15,6 +15,7 @@ from seed_steam_games import (
     load_env,
     normalize_category_codes,
     normalize_translations,
+    resolve_region_code,
 )
 
 
@@ -55,6 +56,18 @@ def resolve_categories(game: dict, app_data_en: dict | None) -> list[str]:
     return normalize_category_codes(categories)
 
 
+def resolve_region(game: dict, app_id: int | None) -> str:
+    manual_data = find_manual_game_data(game.get("title"))
+    if manual_data is None:
+        title_i18n = game.get("titleI18n") or {}
+        for candidate in title_i18n.values():
+            manual_data = find_manual_game_data(candidate)
+            if manual_data is not None:
+                break
+
+    return resolve_region_code(app_id, manual_data)
+
+
 def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -89,6 +102,7 @@ def main() -> None:
             "titleI18n": title_i18n,
             "descriptionI18n": description_i18n,
             "categories": categories,
+            "regionCode": resolve_region(game, app_id),
             "updatedAt": datetime.now(timezone.utc),
         }
 

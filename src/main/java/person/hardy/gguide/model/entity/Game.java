@@ -31,6 +31,8 @@ public class Game {
 
     private List<String> categories = new ArrayList<>();
 
+    private String regionCode = "UNKNOWN";
+
     private Instant releaseDate;
 
     private Instant createdAt = Instant.now();

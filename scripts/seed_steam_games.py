@@ -128,6 +128,34 @@ CATEGORY_ALIASES = {
     "合作": "COOP",
 }
 
+REGION_BY_APP_ID = {
+    1086940: "BE",
+    1091500: "PL",
+    1245620: "JP",
+    1145360: "US",
+    367520: "AU",
+    1426210: "SE",
+    1174180: "US",
+    814380: "JP",
+    553850: "SE",
+    990080: "US",
+    1716740: "US",
+    1817070: "US",
+    1938090: "US",
+    1172470: "US",
+    1085660: "US",
+    730: "US",
+    271590: "US",
+    570: "US",
+    550: "US",
+    620: "US",
+    394360: "SE",
+    413150: "US",
+    2878980: "US",
+    275850: "UK",
+    359550: "CA",
+}
+
 MANUAL_GAME_DATA = {
     "塞尔达传说：旷野之息": {
         "titleI18n": {
@@ -139,6 +167,7 @@ MANUAL_GAME_DATA = {
             "en-US": "Wake up in Hyrule and explore a vast open world filled with puzzles, climbing, and player-driven adventure.",
         },
         "categories": ["ACTION", "ADVENTURE", "OPEN_WORLD", "SINGLE_PLAYER"],
+        "regionCode": "JP",
     },
     "巫师 3：狂猎": {
         "titleI18n": {
@@ -150,6 +179,7 @@ MANUAL_GAME_DATA = {
             "en-US": "Play as Geralt of Rivia and hunt for Ciri across a war-torn continent in a sprawling story-driven RPG.",
         },
         "categories": ["RPG", "ADVENTURE", "OPEN_WORLD", "SINGLE_PLAYER"],
+        "regionCode": "PL",
     },
     "CS:GO": {
         "titleI18n": {
@@ -161,6 +191,7 @@ MANUAL_GAME_DATA = {
             "en-US": "A classic team-based tactical shooter built around high-stakes objective play.",
         },
         "categories": ["SHOOTER", "ACTION", "MULTIPLAYER"],
+        "regionCode": "US",
     },
     "文明 6": {
         "titleI18n": {
@@ -172,6 +203,7 @@ MANUAL_GAME_DATA = {
             "en-US": "Build an empire from the ancient era to the information age in a turn-based strategy sandbox.",
         },
         "categories": ["STRATEGY", "SIMULATION", "TURN_BASED", "SINGLE_PLAYER"],
+        "regionCode": "US",
     },
     "FIFA 23": {
         "titleI18n": {
@@ -183,6 +215,7 @@ MANUAL_GAME_DATA = {
             "en-US": "Step onto the pitch with licensed clubs, leagues, and competitive multiplayer football action.",
         },
         "categories": ["SPORTS", "SIMULATION", "MULTIPLAYER"],
+        "regionCode": "CA",
     },
 }
 
@@ -327,6 +360,16 @@ def normalize_translations(values: dict[str, str] | None, fallback: str | None =
     return normalized
 
 
+def resolve_region_code(app_id: int | None = None, manual_data: dict | None = None) -> str:
+    if manual_data and manual_data.get("regionCode"):
+        return manual_data["regionCode"]
+
+    if app_id is not None and app_id in REGION_BY_APP_ID:
+        return REGION_BY_APP_ID[app_id]
+
+    return "UNKNOWN"
+
+
 def build_steam_localized_payload(
     details_en: dict,
     details_zh: dict,
@@ -367,6 +410,7 @@ def build_game_document(details_en: dict, details_zh: dict) -> dict:
 
     title_i18n, description_i18n, categories = build_steam_localized_payload(details_en, details_zh)
     now = datetime.now(timezone.utc)
+    region_code = resolve_region_code(details_en["steam_appid"])
 
     return {
         "titleI18n": title_i18n,
@@ -376,6 +420,7 @@ def build_game_document(details_en: dict, details_zh: dict) -> dict:
         "downloadLink": f"https://store.steampowered.com/app/{details_en['steam_appid']}/",
         "rating": round(metacritic / 10, 1) if metacritic is not None else (review_rating or 8.0),
         "categories": categories,
+        "regionCode": region_code,
         "releaseDate": release_date,
         "updatedAt": now,
         "createdAt": now,

@@ -3,6 +3,7 @@ package person.hardy.gguide.service;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import person.hardy.gguide.common.util.GameCategoryCatalog;
+import person.hardy.gguide.common.util.GameRegionCatalog;
 import person.hardy.gguide.common.util.LocaleUtil;
 import person.hardy.gguide.model.dto.GameDTO;
 import person.hardy.gguide.model.entity.Game;
@@ -70,6 +71,7 @@ public class GameService {
         game.setDownloadLink(gameDTO.getDownloadLink());
         game.setRating(gameDTO.getRating());
         game.setCategories(GameCategoryCatalog.normalizeCodes(gameDTO.getCategories()));
+        game.setRegionCode(GameRegionCatalog.normalizeCode(gameDTO.getRegionCode()));
         game.setReleaseDate(gameDTO.getReleaseDate());
 
         Game saved = gameRepository.save(game);
@@ -110,6 +112,8 @@ public class GameService {
         dto.setRating(game.getRating());
         dto.setCategories(GameCategoryCatalog.normalizeCodes(game.getCategories()));
         dto.setCategoryLabels(GameCategoryCatalog.resolveLabels(dto.getCategories(), locale));
+        dto.setRegionCode(GameRegionCatalog.normalizeCode(game.getRegionCode()));
+        dto.setRegionLabel(GameRegionCatalog.resolveLabel(dto.getRegionCode(), locale));
         dto.setReleaseDate(game.getReleaseDate());
         return dto;
     }

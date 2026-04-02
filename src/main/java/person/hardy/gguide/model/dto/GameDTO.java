@@ -19,6 +19,8 @@ public class GameDTO {
     private Double rating;
     private List<String> categories = new ArrayList<>();
     private List<String> categoryLabels = new ArrayList<>();
+    private String regionCode;
+    private String regionLabel;
     private Instant releaseDate;
     private String cinematicTrailer;
     private String downloadLink;
