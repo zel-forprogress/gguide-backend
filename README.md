@@ -61,6 +61,8 @@ MONGO_DATABASE=
 MONGO_USERNAME=
 MONGO_PASSWORD=
 MONGO_CLUSTER=
+JWT_SECRET=
+JWT_EXPIRATION_MS=86400000
 ```
 
 Mongo 连接串由 [application.yml](D:/code/projects/gguide-backend/src/main/resources/application.yml) 读取：
@@ -69,7 +71,16 @@ Mongo 连接串由 [application.yml](D:/code/projects/gguide-backend/src/main/re
 spring:
   mongodb:
     uri: mongodb+srv://${env.MONGO_USERNAME}:${env.MONGO_PASSWORD}@${env.MONGO_CLUSTER}/${env.MONGO_DATABASE}?retryWrites=true&w=majority
+
+jwt:
+  secret: ${env.JWT_SECRET}
+  expiration-ms: ${env.JWT_EXPIRATION_MS:86400000}
 ```
+
+JWT 配置说明：
+
+- `JWT_SECRET`：用于 JWT 签名和验签的密钥，建议使用足够长的随机字符串
+- `JWT_EXPIRATION_MS`：token 过期时间，单位毫秒，示例值为 24 小时
 
 ## 启动后端
 
@@ -96,13 +107,7 @@ npm install
 npm run dev
 ```
 
-前端当前在 [src/services/api.ts](D:/code/projects/gguide-frontend/src/services/api.ts) 中默认请求：
-
-```ts
-baseURL: 'http://localhost:8080'
-```
-
-所以联调时需要保证后端运行在本机 `8080` 端口。
+前端开发环境通过 [vite.config.ts](D:/code/projects/gguide-frontend/vite.config.ts) 的 Vite proxy 转发 `/api` 请求，因此联调时需要保证后端运行在本机 `8080` 端口。
 
 ## 数据脚本
 
@@ -205,6 +210,5 @@ GET /api/games?lang=en-US
 
 ## 当前已知事项
 
-- JWT 密钥仍然是代码内硬编码，后续建议改成环境变量配置
-- 前端 API 地址目前写死为 `http://localhost:8080`
+- 前端开发代理默认指向 `http://localhost:8080`
 - 后端测试目前以基础上下文测试为主，接口级和业务级测试还可以继续补强
