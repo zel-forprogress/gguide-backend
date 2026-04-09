@@ -16,6 +16,12 @@ spring:
 jwt:
   secret: ${env.JWT_SECRET}
   expiration-ms: ${env.JWT_EXPIRATION_MS:86400000}
+
+ai:
+  api:
+    key: ${env.AI_API_KEY}
+    url: ${env.AI_API_URL:https://api.deepseek.com/v1/chat/completions}
+  model: ${env.AI_MODEL:deepseek-chat}
 logging:
   level:
     root: INFO
