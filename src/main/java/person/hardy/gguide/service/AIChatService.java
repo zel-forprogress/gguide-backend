@@ -14,13 +14,23 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
 public class AIChatService {
 
     private static final Logger log = LoggerFactory.getLogger(AIChatService.class);
+    private static final int CONTEXT_LIMIT = 8;
+    private static final DateTimeFormatter DATE_FORMATTER =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.systemDefault());
 
     @Value("${ai.api.url:https://api.deepseek.com/v1/chat/completions}")
     private String apiUrl;
@@ -34,129 +44,201 @@ public class AIChatService {
     @Autowired
     private GameRepository gameRepository;
 
-    //
     public String chat(List<ChatMessageDTO> messages) {
         String lastUserMessage = messages.stream()
-                .filter(m -> "user".equals(m.getRole()))
+                .filter(message -> "user".equals(message.getRole()))
                 .reduce((first, second) -> second)
                 .map(ChatMessageDTO::getContent)
                 .orElse("");
 
-        String context = buildContextFromDatabase(lastUserMessage);
-        String systemPrompt = buildSystemPrompt(context);
-
+        RecommendationContext recommendationContext = buildRecommendationContext(lastUserMessage);
+        String systemPrompt = buildSystemPrompt(lastUserMessage, recommendationContext);
         List<ChatMessageDTO> enhancedMessages = buildEnhancedMessages(systemPrompt, messages);
 
         return callAIModel(enhancedMessages);
     }
 
-    private String buildContextFromDatabase(String userMessage) {
-        if (userMessage == null || userMessage.trim().isEmpty()) {
-            return "";
-        }
-
-        List<Game> relevantGames = searchRelevantGames(userMessage);
-
-        if (relevantGames.isEmpty()) {
-            return "当前数据库中没有找到相关游戏。";
-        }
-
-        return relevantGames.stream()
-                .map(this::formatGameInfo)
-                .collect(Collectors.joining("\n\n"));
-    }
-
-    private List<Game> searchRelevantGames(String userMessage) {
+    private RecommendationContext buildRecommendationContext(String userMessage) {
         List<Game> allGames = gameRepository.findAll();
 
-        String lowerMessage = userMessage.toLowerCase();
+        if (allGames.isEmpty()) {
+            return new RecommendationContext(
+                    "empty",
+                    "平台当前还没有可用的游戏数据，请明确告诉用户暂时无法基于游戏库做推荐。"
+            );
+        }
+
+        List<Game> matchedGames = searchRelevantGames(userMessage, allGames);
+        if (!matchedGames.isEmpty()) {
+            return new RecommendationContext(
+                    "matched",
+                    formatGameList("以下是和用户问题最相关的候选游戏，请优先基于这些内容回答：", matchedGames)
+            );
+        }
+
+        List<Game> featuredGames = pickFeaturedGames(allGames);
+        return new RecommendationContext(
+                "featured",
+                formatGameList("用户暂时没有提供明确偏好，请基于下面这些平台精选游戏给出 3 到 5 个入门推荐：", featuredGames)
+        );
+    }
+
+    private List<Game> searchRelevantGames(String userMessage, List<Game> allGames) {
+        String normalizedMessage = normalize(userMessage);
+        if (normalizedMessage.isBlank() || isGenericRecommendationRequest(normalizedMessage)) {
+            return List.of();
+        }
 
         return allGames.stream()
-                .filter(game -> isGameRelevant(game, lowerMessage))
-                .limit(10)
+                .filter(game -> isGameRelevant(game, normalizedMessage))
+                .sorted(Comparator
+                        .comparing((Game game) -> computeRelevanceScore(game, normalizedMessage)).reversed()
+                        .thenComparing(this::safeRating, Comparator.reverseOrder())
+                        .thenComparing(this::safeReleaseDate, Comparator.reverseOrder()))
+                .limit(CONTEXT_LIMIT)
                 .collect(Collectors.toList());
     }
 
-    private boolean isGameRelevant(Game game, String lowerMessage) {
-        String title = getTitleFromI18n(game.getTitleI18n()).toLowerCase();
-        String description = getDescriptionFromI18n(game.getDescriptionI18n()).toLowerCase();
-        List<String> categories = game.getCategories();
+    private List<Game> pickFeaturedGames(List<Game> allGames) {
+        return allGames.stream()
+                .sorted(Comparator
+                        .comparing(this::safeRating, Comparator.reverseOrder())
+                        .thenComparing(this::safeReleaseDate, Comparator.reverseOrder()))
+                .limit(CONTEXT_LIMIT)
+                .collect(Collectors.toList());
+    }
 
-        return title.contains(lowerMessage)
-                || description.contains(lowerMessage)
-                || categories.stream().anyMatch(lowerMessage::contains)
-                || lowerMessage.contains(title);
+    private boolean isGameRelevant(Game game, String normalizedMessage) {
+        return computeRelevanceScore(game, normalizedMessage) > 0;
+    }
+
+    private int computeRelevanceScore(Game game, String normalizedMessage) {
+        int score = 0;
+        String title = normalize(getTitleFromI18n(game.getTitleI18n()));
+        String description = normalize(getDescriptionFromI18n(game.getDescriptionI18n()));
+        String region = normalize(game.getRegionCode());
+
+        if (!title.isBlank()) {
+            if (title.contains(normalizedMessage) || normalizedMessage.contains(title)) {
+                score += 6;
+            }
+
+            for (String token : splitKeywords(normalizedMessage)) {
+                if (token.length() >= 2 && title.contains(token)) {
+                    score += 3;
+                }
+            }
+        }
+
+        if (!description.isBlank()) {
+            for (String token : splitKeywords(normalizedMessage)) {
+                if (token.length() >= 2 && description.contains(token)) {
+                    score += 2;
+                }
+            }
+        }
+
+        if (!region.isBlank() && normalizedMessage.contains(region)) {
+            score += 2;
+        }
+
+        for (String category : game.getCategories()) {
+            String normalizedCategory = normalize(category);
+            if (!normalizedCategory.isBlank() && normalizedMessage.contains(normalizedCategory)) {
+                score += 3;
+            }
+        }
+
+        return score;
+    }
+
+    private boolean isGenericRecommendationRequest(String normalizedMessage) {
+        List<String> genericKeywords = List.of(
+                "推荐",
+                "有啥",
+                "玩什么",
+                "有什么",
+                "几个游戏",
+                "游戏吧",
+                "game",
+                "recommend",
+                "something to play"
+        );
+
+        return genericKeywords.stream().anyMatch(normalizedMessage::contains);
+    }
+
+    private List<String> splitKeywords(String normalizedMessage) {
+        return List.of(normalizedMessage.split("[\\s,，。.!！？/]+"));
+    }
+
+    private String formatGameList(String title, List<Game> games) {
+        String gameDetails = games.stream()
+                .map(this::formatGameInfo)
+                .collect(Collectors.joining("\n\n"));
+
+        return title + "\n\n" + gameDetails;
     }
 
     private String formatGameInfo(Game game) {
-        String title = getTitleFromI18n(game.getTitleI18n());
+        StringBuilder builder = new StringBuilder();
+        builder.append("游戏名: ").append(getTitleFromI18n(game.getTitleI18n()));
+
+        if (game.getRating() != null) {
+            builder.append("\n评分: ").append(game.getRating()).append("/10");
+        }
+
+        if (game.getCategories() != null && !game.getCategories().isEmpty()) {
+            builder.append("\n分类: ").append(String.join(", ", game.getCategories()));
+        }
+
+        if (game.getRegionCode() != null && !game.getRegionCode().isBlank() && !"UNKNOWN".equals(game.getRegionCode())) {
+            builder.append("\n地区: ").append(game.getRegionCode());
+        }
+
+        if (game.getReleaseDate() != null) {
+            builder.append("\n发售时间: ").append(formatInstant(game.getReleaseDate()));
+        }
+
         String description = getDescriptionFromI18n(game.getDescriptionI18n());
-        Double rating = game.getRating();
-        List<String> categories = game.getCategories();
-        String region = game.getRegionCode();
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("游戏名称: ").append(title);
-        if (rating != null) {
-            sb.append("\n评分: ").append(rating).append("/10");
-        }
-        if (!categories.isEmpty()) {
-            sb.append("\n分类: ").append(String.join(", ", categories));
-        }
-        if (region != null && !region.equals("UNKNOWN")) {
-            sb.append("\n地区: ").append(region);
-        }
         if (!description.isBlank()) {
-            sb.append("\n简介: ").append(description);
+            builder.append("\n简介: ").append(description);
         }
 
-        return sb.toString();
+        return builder.toString();
     }
 
-    private String getTitleFromI18n(java.util.Map<String, String> titleI18n) {
-        if (titleI18n == null || titleI18n.isEmpty()) {
-            return "未知游戏";
-        }
-        String zhTitle = titleI18n.get(LocaleUtil.LOCALE_ZH_CN);
-        if (zhTitle != null && !zhTitle.isBlank()) {
-            return zhTitle;
-        }
-        return titleI18n.values().stream().findFirst().orElse("未知游戏");
-    }
-
-    private String getDescriptionFromI18n(java.util.Map<String, String> descriptionI18n) {
-        if (descriptionI18n == null || descriptionI18n.isEmpty()) {
-            return "";
-        }
-        String zhDesc = descriptionI18n.get(LocaleUtil.LOCALE_ZH_CN);
-        if (zhDesc != null && !zhDesc.isBlank()) {
-            return zhDesc;
-        }
-        return descriptionI18n.values().stream().findFirst().orElse("");
-    }
-
-    private String buildSystemPrompt(String context) {
+    private String buildSystemPrompt(String lastUserMessage, RecommendationContext recommendationContext) {
         return """
-                你是一个专业游戏导航平台 G-Guide 的AI助手。你的任务是基于平台中真实的游戏数据为用户提供准确的推荐和建议。
-                
-                【重要规则】
-                1. 你只能推荐以下提供的游戏列表中的游戏，不要编造不存在的内容
-                2. 回答要简洁专业，突出重点信息（名称、评分、特色）
-                3. 如果用户询问的游戏不在列表中，请如实告知并推荐相似类型的游戏
-                4. 使用中文回答（除非用户明确要求其他语言）
-                
-                【可用游戏数据】
+                你是 G-Guide 平台的 AI 游戏助手。
+                你的任务是只基于平台提供的真实游戏数据，为用户给出可靠、简洁、有帮助的推荐和说明。
+
+                回答规则：
+                1. 只能推荐下方数据里真实存在的游戏，不要编造平台里没有的作品。
+                2. 优先直接回答用户问题；如果用户只是泛泛地求推荐，请主动给出 3 到 5 个推荐，并说明推荐理由。
+                3. 当用户没有浏览历史、收藏记录或明确偏好时，不要说“无法推荐”；你应该从平台精选游戏中挑选合适的作品给出入门建议。
+                4. 如果平台当前确实没有任何可用游戏数据，再明确告诉用户暂无数据。
+                5. 使用中文回答，语气自然、友好，尽量突出“适合谁玩、亮点是什么、为什么推荐”。
+
+                用户最后一句话：
                 %s
-                
-                请基于以上数据回答用户问题。
-                """.formatted(context);
+
+                可用游戏平台数据：
+                %s
+
+                当前推荐模式：%s
+                """.formatted(
+                lastUserMessage == null || lastUserMessage.isBlank() ? "用户没有提供额外问题" : lastUserMessage,
+                recommendationContext.context(),
+                recommendationContext.mode()
+        );
     }
 
     private List<ChatMessageDTO> buildEnhancedMessages(String systemPrompt, List<ChatMessageDTO> messages) {
-        List<ChatMessageDTO> enhanced = new java.util.ArrayList<>();
-        enhanced.add(new ChatMessageDTO("system", systemPrompt));
-        enhanced.addAll(messages);
-        return enhanced;
+        List<ChatMessageDTO> enhancedMessages = new ArrayList<>();
+        enhancedMessages.add(new ChatMessageDTO("system", systemPrompt));
+        enhancedMessages.addAll(messages);
+        return enhancedMessages;
     }
 
     private String callAIModel(List<ChatMessageDTO> messages) {
@@ -179,38 +261,38 @@ public class AIChatService {
 
             if (response.statusCode() == 200) {
                 return parseAIResponse(response.body());
-            } else {
-                log.error("AI API调用失败: {} - {}", response.statusCode(), response.body());
-                return "抱歉，AI服务暂时不可用，请稍后再试。";
             }
+
+            log.error("AI API调用失败: {} - {}", response.statusCode(), response.body());
+            return "抱歉，AI 服务暂时不可用，请稍后再试。";
         } catch (Exception e) {
-            log.error("调用AI模型时发生异常", e);
-            return "抱歉，发生了错误，请稍后再试。";
+            log.error("调用 AI 模型时发生异常", e);
+            return "抱歉，调用 AI 服务时出现问题，请稍后再试。";
         }
     }
 
     private String buildRequestBody(List<ChatMessageDTO> messages) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("{\"model\":\"").append(model).append("\",\"messages\":[");
+        StringBuilder builder = new StringBuilder();
+        builder.append("{\"model\":\"").append(model).append("\",\"messages\":[");
 
-        for (int i = 0; i < messages.size(); i++) {
-            ChatMessageDTO msg = messages.get(i);
-            sb.append("{\"role\":\"").append(msg.getRole()).append("\",\"content\":\"")
-                    .append(escapeJson(msg.getContent())).append("\"}");
-            if (i < messages.size() - 1) {
-                sb.append(",");
+        for (int index = 0; index < messages.size(); index++) {
+            ChatMessageDTO message = messages.get(index);
+            builder.append("{\"role\":\"").append(message.getRole()).append("\",\"content\":\"")
+                    .append(escapeJson(message.getContent())).append("\"}");
+            if (index < messages.size() - 1) {
+                builder.append(",");
             }
         }
 
-        sb.append("]}");
-        return sb.toString();
+        builder.append("]}");
+        return builder.toString();
     }
 
     private String parseAIResponse(String responseBody) {
         try {
             int choicesIndex = responseBody.indexOf("\"choices\"");
             if (choicesIndex == -1) {
-                return "无法解析AI响应";
+                return "无法解析 AI 响应";
             }
 
             int messageIndex = responseBody.indexOf("\"message\"", choicesIndex);
@@ -223,28 +305,76 @@ public class AIChatService {
                     .replace("\\n", "\n")
                     .replace("\\\"", "\"");
         } catch (Exception e) {
-            log.error("解析AI响应失败", e);
-            return "解析AI响应时发生错误";
+            log.error("解析 AI 响应失败", e);
+            return "解析 AI 响应时发生错误";
         }
     }
 
-    private int findClosingQuote(String str, int start) {
-        int i = start;
-        while (i < str.length()) {
-            if (str.charAt(i) == '"' && (i == 0 || str.charAt(i - 1) != '\\')) {
-                return i;
+    private int findClosingQuote(String text, int start) {
+        int index = start;
+        while (index < text.length()) {
+            if (text.charAt(index) == '"' && (index == 0 || text.charAt(index - 1) != '\\')) {
+                return index;
             }
-            i++;
+            index++;
         }
-        return str.length();
+        return text.length();
     }
 
     private String escapeJson(String text) {
-        if (text == null) return "";
+        if (text == null) {
+            return "";
+        }
+
         return text.replace("\\", "\\\\")
                 .replace("\"", "\\\"")
                 .replace("\n", "\\n")
                 .replace("\r", "\\r")
                 .replace("\t", "\\t");
+    }
+
+    private String getTitleFromI18n(Map<String, String> titleI18n) {
+        if (titleI18n == null || titleI18n.isEmpty()) {
+            return "未知游戏";
+        }
+
+        String zhTitle = titleI18n.get(LocaleUtil.LOCALE_ZH_CN);
+        if (zhTitle != null && !zhTitle.isBlank()) {
+            return zhTitle;
+        }
+
+        return titleI18n.values().stream().findFirst().orElse("未知游戏");
+    }
+
+    private String getDescriptionFromI18n(Map<String, String> descriptionI18n) {
+        if (descriptionI18n == null || descriptionI18n.isEmpty()) {
+            return "";
+        }
+
+        String zhDescription = descriptionI18n.get(LocaleUtil.LOCALE_ZH_CN);
+        if (zhDescription != null && !zhDescription.isBlank()) {
+            return zhDescription;
+        }
+
+        return descriptionI18n.values().stream().findFirst().orElse("");
+    }
+
+    private String normalize(String text) {
+        return text == null ? "" : text.toLowerCase(Locale.ROOT).trim();
+    }
+
+    private Double safeRating(Game game) {
+        return game.getRating() == null ? 0D : game.getRating();
+    }
+
+    private Instant safeReleaseDate(Game game) {
+        return game.getReleaseDate() == null ? Instant.EPOCH : game.getReleaseDate();
+    }
+
+    private String formatInstant(Instant instant) {
+        return DATE_FORMATTER.format(instant);
+    }
+
+    private record RecommendationContext(String mode, String context) {
     }
 }
