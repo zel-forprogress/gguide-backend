@@ -20,8 +20,8 @@ jwt:
 ai:
   api:
     key: ${env.AI_API_KEY}
-    url: ${env.AI_API_URL:https://api.deepseek.com/v1/chat/completions}
-  model: ${env.AI_MODEL:deepseek-chat}
+    url: ${env.AI_API_URL}
+  model: ${env.AI_MODEL}
 logging:
   level:
     root: INFO

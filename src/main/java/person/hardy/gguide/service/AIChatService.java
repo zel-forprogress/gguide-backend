@@ -6,8 +6,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import person.hardy.gguide.common.util.LocaleUtil;
+import person.hardy.gguide.model.dto.ChatConversationDTO;
+import person.hardy.gguide.model.dto.ChatConversationSummaryDTO;
 import person.hardy.gguide.model.dto.ChatMessageDTO;
+import person.hardy.gguide.model.dto.ChatRequestDTO;
+import person.hardy.gguide.model.dto.ChatResponseDTO;
+import person.hardy.gguide.model.entity.AIChatConversation;
 import person.hardy.gguide.model.entity.Game;
+import person.hardy.gguide.repository.AIChatConversationRepository;
 import person.hardy.gguide.repository.GameRepository;
 
 import java.net.URI;
@@ -32,19 +38,23 @@ public class AIChatService {
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.systemDefault());
 
-    @Value("${ai.api.url:https://api.deepseek.com/v1/chat/completions}")
+    @Value("${ai.api.url}")
     private String apiUrl;
 
     @Value("${ai.api.key}")
     private String apiKey;
 
-    @Value("${ai.model:deepseek-chat}")
+    @Value("${ai.model}")
     private String model;
 
     @Autowired
     private GameRepository gameRepository;
 
-    public String chat(List<ChatMessageDTO> messages) {
+    @Autowired
+    private AIChatConversationRepository aiChatConversationRepository;
+
+    public ChatResponseDTO chat(String username, ChatRequestDTO request) {
+        List<ChatMessageDTO> messages = request.getMessages();
         String lastUserMessage = messages.stream()
                 .filter(message -> "user".equals(message.getRole()))
                 .reduce((first, second) -> second)
@@ -55,7 +65,108 @@ public class AIChatService {
         String systemPrompt = buildSystemPrompt(lastUserMessage, recommendationContext);
         List<ChatMessageDTO> enhancedMessages = buildEnhancedMessages(systemPrompt, messages);
 
-        return callAIModel(enhancedMessages);
+        String response = callAIModel(enhancedMessages);
+        AIChatConversation conversation = saveConversation(
+                username,
+                request.getConversationId(),
+                messages,
+                response
+        );
+
+        return new ChatResponseDTO(
+                conversation.getId(),
+                conversation.getTitle(),
+                response,
+                conversation.getMessages(),
+                conversation.getUpdatedAt()
+        );
+    }
+
+    public List<ChatConversationSummaryDTO> listConversations(String username) {
+        return aiChatConversationRepository.findTop30ByUsernameOrderByUpdatedAtDesc(username).stream()
+                .map(this::toSummaryDTO)
+                .collect(Collectors.toList());
+    }
+
+    public ChatConversationDTO getConversation(String username, String conversationId) {
+        AIChatConversation conversation = getOwnedConversation(username, conversationId);
+        return new ChatConversationDTO(
+                conversation.getId(),
+                conversation.getTitle(),
+                conversation.getMessages(),
+                conversation.getCreatedAt(),
+                conversation.getUpdatedAt()
+        );
+    }
+
+    private AIChatConversation saveConversation(
+            String username,
+            String conversationId,
+            List<ChatMessageDTO> userMessages,
+            String assistantResponse
+    ) {
+        AIChatConversation conversation = hasText(conversationId)
+                ? getOwnedConversation(username, conversationId)
+                : createConversation(username, userMessages);
+
+        List<ChatMessageDTO> persistedMessages = new ArrayList<>(userMessages);
+        persistedMessages.add(new ChatMessageDTO("assistant", assistantResponse));
+
+        conversation.setMessages(persistedMessages);
+        conversation.setUpdatedAt(Instant.now());
+        return aiChatConversationRepository.save(conversation);
+    }
+
+    private AIChatConversation createConversation(String username, List<ChatMessageDTO> messages) {
+        AIChatConversation conversation = new AIChatConversation();
+        conversation.setUsername(username);
+        conversation.setTitle(buildConversationTitle(messages));
+        Instant now = Instant.now();
+        conversation.setCreatedAt(now);
+        conversation.setUpdatedAt(now);
+        return conversation;
+    }
+
+    private AIChatConversation getOwnedConversation(String username, String conversationId) {
+        AIChatConversation conversation = aiChatConversationRepository.findById(conversationId)
+                .orElseThrow(() -> new RuntimeException("AI chat conversation not found"));
+
+        if (!username.equals(conversation.getUsername())) {
+            throw new RuntimeException("AI chat conversation not found");
+        }
+
+        return conversation;
+    }
+
+    private ChatConversationSummaryDTO toSummaryDTO(AIChatConversation conversation) {
+        int messageCount = conversation.getMessages() == null ? 0 : conversation.getMessages().size();
+        return new ChatConversationSummaryDTO(
+                conversation.getId(),
+                conversation.getTitle(),
+                conversation.getUpdatedAt(),
+                messageCount
+        );
+    }
+
+    private String buildConversationTitle(List<ChatMessageDTO> messages) {
+        String title = messages.stream()
+                .filter(message -> "user".equals(message.getRole()))
+                .map(ChatMessageDTO::getContent)
+                .filter(this::hasText)
+                .findFirst()
+                .orElse("New chat")
+                .replaceAll("\\s+", " ")
+                .trim();
+
+        if (title.length() <= 28) {
+            return title;
+        }
+
+        return title.substring(0, 28) + "...";
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 
     private RecommendationContext buildRecommendationContext(String userMessage) {
