@@ -14,4 +14,5 @@ public class ChatConversationSummaryDTO {
     private String title;
     private Instant updatedAt;
     private int messageCount;
+    private String preview;
 }

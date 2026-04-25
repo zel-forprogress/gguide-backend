@@ -144,8 +144,27 @@ public class AIChatService {
                 conversation.getId(),
                 conversation.getTitle(),
                 conversation.getUpdatedAt(),
-                messageCount
+                messageCount,
+                buildConversationPreview(conversation.getMessages())
         );
+    }
+
+    private String buildConversationPreview(List<ChatMessageDTO> messages) {
+        if (messages == null || messages.isEmpty()) {
+            return "";
+        }
+
+        String preview = messages.stream()
+                .map(ChatMessageDTO::getContent)
+                .filter(this::hasText)
+                .map(content -> content.replaceAll("\\s+", " ").trim())
+                .collect(Collectors.joining(" "));
+
+        if (preview.length() <= 160) {
+            return preview;
+        }
+
+        return preview.substring(0, 160) + "...";
     }
 
     private String buildConversationTitle(List<ChatMessageDTO> messages) {
