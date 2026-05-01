@@ -21,6 +21,8 @@ public class User {
 
     private String password;
 
+    private boolean admin = false;
+
     private List<String> favoriteGameIds = new ArrayList<>();
 
     private List<String> recentlyViewedGameIds = new ArrayList<>();

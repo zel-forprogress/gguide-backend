@@ -1,6 +1,7 @@
 package person.hardy.gguide.service;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import person.hardy.gguide.common.util.GameCategoryCatalog;
 import person.hardy.gguide.common.util.GameRegionCatalog;
@@ -20,6 +21,9 @@ public class GameService {
 
     @Autowired
     private GameRepository gameRepository;
+
+    @Autowired
+    private AuthService authService;
 
     public List<GameDTO> getAllGames(String locale) {
         return gameRepository.findAll().stream()
@@ -44,7 +48,11 @@ public class GameService {
         return convertToDTO(game, locale);
     }
 
-    public GameDTO createGame(GameDTO gameDTO) {
+    public GameDTO createGame(GameDTO gameDTO, String username, String locale) {
+        if (!authService.isAdmin(username)) {
+            throw new AccessDeniedException("Only admin users can create games");
+        }
+
         Map<String, String> titleI18n = normalizeTranslations(gameDTO.getTitleI18n(), gameDTO.getTitle());
         Map<String, String> descriptionI18n = normalizeTranslations(gameDTO.getDescriptionI18n(), gameDTO.getDescription());
         String defaultTitle = LocaleUtil.resolveText(titleI18n, LocaleUtil.LOCALE_ZH_CN);
@@ -75,7 +83,7 @@ public class GameService {
         game.setReleaseDate(gameDTO.getReleaseDate());
 
         Game saved = gameRepository.save(game);
-        return convertToDTO(saved, LocaleUtil.LOCALE_ZH_CN);
+        return convertToDTO(saved, locale);
     }
 
     public List<GameDTO> getGamesByIds(List<String> ids, String locale) {

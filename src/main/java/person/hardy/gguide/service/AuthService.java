@@ -4,6 +4,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import person.hardy.gguide.common.util.JWTUtil;
+import person.hardy.gguide.model.dto.UserProfileDTO;
 import person.hardy.gguide.model.entity.User;
 import person.hardy.gguide.repository.UserRepository;
 
@@ -19,34 +20,55 @@ public class AuthService {
     @Autowired
     private JWTUtil jwtUtil;
 
-    //注册
     public User register(String username, String password) {
-        // 1. 检查用户名是否已存在
         if (userRepository.findByUsername(username).isPresent()) {
-            throw new RuntimeException("用户名已存在");
+            throw new RuntimeException("Username already exists");
         }
 
-        // 2. 创建新用户并加密密码
         User newUser = new User();
         newUser.setUsername(username);
-        newUser.setPassword(passwordEncoder.encode(password)); // 加密！
+        newUser.setPassword(passwordEncoder.encode(password));
+        newUser.setAdmin(false);
 
-        // 3. 保存到数据库
         return userRepository.save(newUser);
     }
 
-    //登录
     public String login(String username, String password) {
-        // 1. 查找用户
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new RuntimeException("用户不存在"));
+        User user = findUser(username);
 
-        // 2. 验证密码
         if (!passwordEncoder.matches(password, user.getPassword())) {
-            throw new RuntimeException("密码错误");
+            throw new RuntimeException("Invalid password");
         }
 
-        // 3. 登录成功，返回token
         return jwtUtil.generateToken(username);
+    }
+
+    public UserProfileDTO getCurrentUser(String username) {
+        User user = findUser(username);
+        return new UserProfileDTO(user.getUsername(), resolveAdmin(user));
+    }
+
+    public boolean isAdmin(String username) {
+        return resolveAdmin(findUser(username));
+    }
+
+    private User findUser(String username) {
+        return userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+    }
+
+    private boolean resolveAdmin(User user) {
+        if (user.isAdmin()) {
+            return true;
+        }
+
+        // Keep the existing development admin account usable after adding the new field.
+        if ("admin".equalsIgnoreCase(user.getUsername())) {
+            user.setAdmin(true);
+            userRepository.save(user);
+            return true;
+        }
+
+        return false;
     }
 }
