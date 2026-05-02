@@ -8,4 +8,5 @@ import lombok.Data;
 public class UserProfileDTO {
     private String username;
     private boolean admin;
+    private String avatarUrl;
 }

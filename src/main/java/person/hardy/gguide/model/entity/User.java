@@ -23,6 +23,8 @@ public class User {
 
     private boolean admin = false;
 
+    private String avatarUrl;
+
     private List<String> favoriteGameIds = new ArrayList<>();
 
     private List<String> recentlyViewedGameIds = new ArrayList<>();
