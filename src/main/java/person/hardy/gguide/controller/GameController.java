@@ -5,6 +5,7 @@ import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -64,5 +65,17 @@ public class GameController {
     ) {
         String locale = LocaleUtil.resolveRequestedLocale(lang, acceptLanguage);
         return ResultVO.success("Game created", gameService.createGame(gameDTO, principal.getName(), locale));
+    }
+
+    @PutMapping("/{id}")
+    public ResultVO<GameDTO> updateGame(
+            @PathVariable String id,
+            @RequestBody GameDTO gameDTO,
+            @RequestParam(value = "lang", required = false) String lang,
+            @RequestHeader(value = "Accept-Language", required = false) String acceptLanguage,
+            Principal principal
+    ) {
+        String locale = LocaleUtil.resolveRequestedLocale(lang, acceptLanguage);
+        return ResultVO.success("Game updated", gameService.updateGame(id, gameDTO, principal.getName(), locale));
     }
 }

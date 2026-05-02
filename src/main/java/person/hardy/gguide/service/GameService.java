@@ -10,6 +10,7 @@ import person.hardy.gguide.model.dto.GameDTO;
 import person.hardy.gguide.model.entity.Game;
 import person.hardy.gguide.repository.GameRepository;
 
+import java.time.Instant;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -81,6 +82,37 @@ public class GameService {
         game.setCategories(GameCategoryCatalog.normalizeCodes(gameDTO.getCategories()));
         game.setRegionCode(GameRegionCatalog.normalizeCode(gameDTO.getRegionCode()));
         game.setReleaseDate(gameDTO.getReleaseDate());
+
+        Game saved = gameRepository.save(game);
+        return convertToDTO(saved, locale);
+    }
+
+    public GameDTO updateGame(String id, GameDTO gameDTO, String username, String locale) {
+        if (!authService.isAdmin(username)) {
+            throw new AccessDeniedException("Only admin users can update games");
+        }
+
+        Game game = gameRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Game not found"));
+
+        Map<String, String> titleI18n = normalizeTranslations(gameDTO.getTitleI18n(), gameDTO.getTitle());
+        Map<String, String> descriptionI18n = normalizeTranslations(gameDTO.getDescriptionI18n(), gameDTO.getDescription());
+        String defaultTitle = LocaleUtil.resolveText(titleI18n, LocaleUtil.LOCALE_ZH_CN);
+
+        if (defaultTitle.isBlank()) {
+            throw new RuntimeException("Game title is required");
+        }
+
+        game.setTitleI18n(titleI18n);
+        game.setDescriptionI18n(descriptionI18n);
+        game.setCoverImage(gameDTO.getCoverImage());
+        game.setCinematicTrailer(gameDTO.getCinematicTrailer());
+        game.setDownloadLink(gameDTO.getDownloadLink());
+        game.setRating(gameDTO.getRating());
+        game.setCategories(GameCategoryCatalog.normalizeCodes(gameDTO.getCategories()));
+        game.setRegionCode(GameRegionCatalog.normalizeCode(gameDTO.getRegionCode()));
+        game.setReleaseDate(gameDTO.getReleaseDate());
+        game.setUpdatedAt(Instant.now());
 
         Game saved = gameRepository.save(game);
         return convertToDTO(saved, locale);
