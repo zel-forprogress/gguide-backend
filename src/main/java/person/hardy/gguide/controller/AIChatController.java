@@ -6,9 +6,12 @@ import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import person.hardy.gguide.model.dto.AISettingsDTO;
+import person.hardy.gguide.model.dto.AISettingsRequestDTO;
 import person.hardy.gguide.model.dto.ChatConversationDTO;
 import person.hardy.gguide.model.dto.ChatConversationSummaryDTO;
 import person.hardy.gguide.model.dto.ChatRequestDTO;
@@ -25,6 +28,19 @@ public class AIChatController {
 
     @Autowired
     private AIChatService aiChatService;
+
+    @GetMapping("/settings")
+    public ResultVO<AISettingsDTO> getSettings(Authentication authentication) {
+        return ResultVO.success(aiChatService.getSettings(authentication.getName()));
+    }
+
+    @PutMapping("/settings")
+    public ResultVO<AISettingsDTO> updateSettings(
+            @RequestBody AISettingsRequestDTO request,
+            Authentication authentication
+    ) {
+        return ResultVO.success(aiChatService.updateSettings(authentication.getName(), request));
+    }
 
     @PostMapping("/chat")
     public ResultVO<ChatResponseDTO> chat(

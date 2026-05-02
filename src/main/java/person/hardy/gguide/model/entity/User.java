@@ -25,6 +25,12 @@ public class User {
 
     private String avatarUrl;
 
+    private String aiApiKey;
+
+    private String aiBaseUrl;
+
+    private String aiModel;
+
     private List<String> favoriteGameIds = new ArrayList<>();
 
     private List<String> recentlyViewedGameIds = new ArrayList<>();

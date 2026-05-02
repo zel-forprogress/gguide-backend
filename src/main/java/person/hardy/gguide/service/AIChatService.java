@@ -6,6 +6,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import person.hardy.gguide.common.util.LocaleUtil;
+import person.hardy.gguide.model.dto.AISettingsDTO;
+import person.hardy.gguide.model.dto.AISettingsRequestDTO;
 import person.hardy.gguide.model.dto.ChatConversationDTO;
 import person.hardy.gguide.model.dto.ChatConversationSummaryDTO;
 import person.hardy.gguide.model.dto.ChatMessageDTO;
@@ -13,8 +15,10 @@ import person.hardy.gguide.model.dto.ChatRequestDTO;
 import person.hardy.gguide.model.dto.ChatResponseDTO;
 import person.hardy.gguide.model.entity.AIChatConversation;
 import person.hardy.gguide.model.entity.Game;
+import person.hardy.gguide.model.entity.User;
 import person.hardy.gguide.repository.AIChatConversationRepository;
 import person.hardy.gguide.repository.GameRepository;
+import person.hardy.gguide.repository.UserRepository;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -53,6 +57,9 @@ public class AIChatService {
     @Autowired
     private AIChatConversationRepository aiChatConversationRepository;
 
+    @Autowired
+    private UserRepository userRepository;
+
     public ChatResponseDTO chat(String username, ChatRequestDTO request) {
         List<ChatMessageDTO> messages = request.getMessages();
         String lastUserMessage = messages.stream()
@@ -65,7 +72,7 @@ public class AIChatService {
         String systemPrompt = buildSystemPrompt(lastUserMessage, recommendationContext);
         List<ChatMessageDTO> enhancedMessages = buildEnhancedMessages(systemPrompt, messages);
 
-        String response = callAIModel(enhancedMessages);
+        String response = callAIModel(enhancedMessages, resolveRuntimeSettings(username));
         AIChatConversation conversation = saveConversation(
                 username,
                 request.getConversationId(),
@@ -97,6 +104,77 @@ public class AIChatService {
                 conversation.getCreatedAt(),
                 conversation.getUpdatedAt()
         );
+    }
+
+    public AISettingsDTO getSettings(String username) {
+        User user = findUser(username);
+        return toSettingsDTO(user);
+    }
+
+    public AISettingsDTO updateSettings(String username, AISettingsRequestDTO request) {
+        User user = findUser(username);
+
+        if (request == null) {
+            return toSettingsDTO(user);
+        }
+
+        if (request.isClearApiKey()) {
+            user.setAiApiKey(null);
+        } else if (hasText(request.getApiKey())) {
+            user.setAiApiKey(request.getApiKey().trim());
+        }
+
+        user.setAiBaseUrl(normalizeNullableText(request.getBaseUrl()));
+        user.setAiModel(normalizeNullableText(request.getModel()));
+        return toSettingsDTO(userRepository.save(user));
+    }
+
+    private User findUser(String username) {
+        return userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+    }
+
+    private AISettingsDTO toSettingsDTO(User user) {
+        boolean hasUserBaseUrl = hasText(user.getAiBaseUrl());
+        boolean hasUserModel = hasText(user.getAiModel());
+        return new AISettingsDTO(
+                hasText(user.getAiApiKey()),
+                maskApiKey(user.getAiApiKey()),
+                hasUserBaseUrl ? user.getAiBaseUrl().trim() : normalizeNullableText(apiUrl),
+                hasUserModel ? user.getAiModel().trim() : normalizeNullableText(model),
+                !hasUserBaseUrl,
+                !hasUserModel
+        );
+    }
+
+    private AIRuntimeSettings resolveRuntimeSettings(String username) {
+        User user = findUser(username);
+        return new AIRuntimeSettings(
+                firstText(user.getAiApiKey(), apiKey),
+                normalizeAIEndpoint(firstText(user.getAiBaseUrl(), apiUrl)),
+                firstText(user.getAiModel(), model)
+        );
+    }
+
+    private String firstText(String primary, String fallback) {
+        return hasText(primary) ? primary.trim() : normalizeNullableText(fallback);
+    }
+
+    private String normalizeNullableText(String value) {
+        return hasText(value) ? value.trim() : null;
+    }
+
+    private String maskApiKey(String value) {
+        if (!hasText(value)) {
+            return "";
+        }
+
+        String trimmed = value.trim();
+        if (trimmed.length() <= 8) {
+            return "****" + trimmed.substring(Math.max(0, trimmed.length() - 2));
+        }
+
+        return trimmed.substring(0, 4) + "..." + trimmed.substring(trimmed.length() - 4);
     }
 
     private AIChatConversation saveConversation(
@@ -371,18 +449,22 @@ public class AIChatService {
         return enhancedMessages;
     }
 
-    private String callAIModel(List<ChatMessageDTO> messages) {
+    private String callAIModel(List<ChatMessageDTO> messages, AIRuntimeSettings settings) {
+        if (!hasText(settings.apiKey()) || !hasText(settings.apiUrl()) || !hasText(settings.model())) {
+            return "AI 助手还没有可用配置。请先在个人设置的 AI 助手管理里填写 API Key、Base URL 和模型名称。";
+        }
+
         try {
             HttpClient client = HttpClient.newBuilder()
                     .connectTimeout(java.time.Duration.ofSeconds(30))
                     .build();
 
-            String requestBody = buildRequestBody(messages);
+            String requestBody = buildRequestBody(messages, settings.model());
 
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(apiUrl))
+                    .uri(URI.create(settings.apiUrl()))
                     .header("Content-Type", "application/json")
-                    .header("Authorization", "Bearer " + apiKey)
+                    .header("Authorization", "Bearer " + settings.apiKey())
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
                     .timeout(java.time.Duration.ofSeconds(60))
                     .build();
@@ -401,9 +483,22 @@ public class AIChatService {
         }
     }
 
-    private String buildRequestBody(List<ChatMessageDTO> messages) {
+    private String normalizeAIEndpoint(String value) {
+        if (!hasText(value)) {
+            return null;
+        }
+
+        String normalized = value.trim().replaceAll("/+$", "");
+        if (normalized.endsWith("/chat/completions")) {
+            return normalized;
+        }
+
+        return normalized + "/chat/completions";
+    }
+
+    private String buildRequestBody(List<ChatMessageDTO> messages, String activeModel) {
         StringBuilder builder = new StringBuilder();
-        builder.append("{\"model\":\"").append(model).append("\",\"messages\":[");
+        builder.append("{\"model\":\"").append(escapeJson(activeModel)).append("\",\"messages\":[");
 
         for (int index = 0; index < messages.size(); index++) {
             ChatMessageDTO message = messages.get(index);
@@ -506,5 +601,8 @@ public class AIChatService {
     }
 
     private record RecommendationContext(String mode, String context) {
+    }
+
+    private record AIRuntimeSettings(String apiKey, String apiUrl, String model) {
     }
 }
