@@ -431,15 +431,15 @@ public class AIChatService {
     }
 
     private String buildSystemPrompt(String lastUserMessage, RecommendationContext recommendationContext) {
-        String basePrompt = “””
+        String basePrompt = """
                 你是 G-Guide 平台的 AI 游戏助手。
 
                 回答规则：
                 1. 只能推荐下方数据里真实存在的游戏，不要编造平台里没有的作品。
                 2. 优先直接回答用户问题；如果用户只是泛泛地求推荐，请主动给出 3 到 5 个推荐，并说明推荐理由。
-                3. 当用户没有浏览历史、收藏记录或明确偏好时，不要说”无法推荐”；你应该从平台精选游戏中挑选合适的作品给出入门建议。
+                3. 当用户没有浏览历史、收藏记录或明确偏好时，不要说\"无法推荐\"；你应该从平台精选游戏中挑选合适的作品给出入门建议。
                 4. 如果平台当前确实没有任何可用游戏数据，再明确告诉用户暂无数据。
-                5. 使用中文回答，语气自然、友好，尽量突出”适合谁玩、亮点是什么、为什么推荐”。
+                5. 使用中文回答，语气自然、友好，尽量突出\"适合谁玩、亮点是什么、为什么推荐\"。
 
                 用户最后一句话：
                 %s
@@ -449,9 +449,9 @@ public class AIChatService {
 
                 当前推荐模式：
                 %s
-                “””;
+                """;
 
-        String generalPrompt = “””
+        String generalPrompt = """
                 你是 G-Guide 平台的 AI 助手。
 
                 回答规则：
@@ -464,17 +464,17 @@ public class AIChatService {
 
                 当前模式：
                 %s
-                “””;
+                """;
 
-        if (“general”.equals(recommendationContext.mode())) {
+        if ("general".equals(recommendationContext.mode())) {
             return generalPrompt.formatted(
-                    hasText(lastUserMessage) ? lastUserMessage : “用户没有提供额外问题”,
+                    hasText(lastUserMessage) ? lastUserMessage : "用户没有提供额外问题",
                     recommendationContext.mode()
             );
         }
 
         return basePrompt.formatted(
-                hasText(lastUserMessage) ? lastUserMessage : “用户没有提供额外问题”,
+                hasText(lastUserMessage) ? lastUserMessage : "用户没有提供额外问题",
                 recommendationContext.context(),
                 recommendationContext.mode()
         );
