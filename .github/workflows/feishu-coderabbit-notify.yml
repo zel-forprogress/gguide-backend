@@ -1,83 +1,119 @@
 name: Send CodeRabbit Review to Feishu
 
 on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: Message used for a manual Feishu notification test
+        required: false
+        default: This is a manual Feishu notification test from GitHub Actions.
   pull_request_review:
     types: [submitted]
 
 jobs:
   notify-feishu:
-    # 只在 CodeRabbit 提交审查时才触发
-    if: github.event.review.user.login == 'coderabbitai[bot]'
+    if: github.event_name == 'workflow_dispatch' || github.event.review.user.login == 'coderabbitai[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Send review to Feishu
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK_URL }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          REVIEW_BODY: ${{ github.event.review.body }}
-          REVIEW_STATE: ${{ github.event.review.state }}
+          REPOSITORY: ${{ github.repository }}
+          PR_TITLE: ${{ github.event.pull_request.title || 'Manual Feishu notification test' }}
+          PR_URL: ${{ github.event.pull_request.html_url || github.server_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login || github.actor }}
+          REVIEW_BODY: ${{ github.event.review.body || inputs.message }}
+          REVIEW_STATE: ${{ github.event.review.state || 'manual_test' }}
         run: |
-          # 截取审查内容前 3000 字符（飞书卡片有长度限制）
-          REVIEW_PREVIEW=$(echo "$REVIEW_BODY" | head -c 3000)
+          python3 <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.request
 
-          # 根据审查状态生成状态文本
-          case "$REVIEW_STATE" in
-            "approved") STATE_TEXT="✅ 通过" ;;
-            "changes_requested") STATE_TEXT="⚠️ 需要修改" ;;
-            "commented") STATE_TEXT="💬 评论" ;;
-            *) STATE_TEXT="$REVIEW_STATE" ;;
-          esac
+          webhook = os.environ.get("FEISHU_WEBHOOK", "").strip()
+          if not webhook:
+              print("FEISHU_WEBHOOK_URL is missing. Add it in GitHub repository Settings > Secrets and variables > Actions.", file=sys.stderr)
+              sys.exit(1)
 
-          # 发送飞书卡片消息
-          curl -s -X POST "$FEISHU_WEBHOOK" \
-            -H "Content-Type: application/json" \
-            -d "$(cat <<EOF
-          {
-            "msg_type": "interactive",
-            "card": {
-              "header": {
-                "template": "blue",
-                "title": {
-                  "tag": "plain_text",
-                  "content": "🦊 CodeRabbit 代码审查报告"
-                }
-              },
-              "elements": [
-                {
-                  "tag": "div",
-                  "text": {
-                    "tag": "lark_md",
-                    "content": "**PR：** [${PR_TITLE}](${PR_URL})\n**提交者：** ${PR_AUTHOR}\n**审查结果：** ${STATE_TEXT}"
-                  }
-                },
-                {
-                  "tag": "hr"
-                },
-                {
-                  "tag": "div",
-                  "text": {
-                    "tag": "lark_md",
-                    "content": "${REVIEW_PREVIEW}"
-                  }
-                },
-                {
-                  "tag": "hr"
-                },
-                {
-                  "tag": "note",
-                  "elements": [
-                    {
-                      "tag": "plain_text",
-                      "content": "由 CodeRabbit 自动审查 · 点击 PR 链接查看完整报告"
-                    }
-                  ]
-                }
-              ]
-            }
+          state_labels = {
+              "approved": "通过",
+              "changes_requested": "需要修改",
+              "commented": "评论",
+              "manual_test": "手动测试",
           }
-          EOF
-          )"
 
-          echo "Sent to Feishu successfully"
+          review_body = (os.environ.get("REVIEW_BODY") or "").strip()
+          review_preview = review_body[:3000] if review_body else "CodeRabbit 已提交审查，但没有返回正文。"
+          review_state = os.environ.get("REVIEW_STATE", "")
+          state_text = state_labels.get(review_state, review_state or "未知")
+
+          payload = {
+              "msg_type": "interactive",
+              "card": {
+                  "header": {
+                      "template": "blue",
+                      "title": {
+                          "tag": "plain_text",
+                          "content": "Gguide CodeRabbit 代码审查报告",
+                      },
+                  },
+                  "elements": [
+                      {
+                          "tag": "div",
+                          "text": {
+                              "tag": "lark_md",
+                              "content": (
+                                  f"**仓库：** {os.environ.get('REPOSITORY', '')}\n"
+                                  f"**PR：** [{os.environ.get('PR_TITLE', '')}]({os.environ.get('PR_URL', '')})\n"
+                                  f"**提交者：** {os.environ.get('PR_AUTHOR', '')}\n"
+                                  f"**审查结果：** {state_text}"
+                              ),
+                          },
+                      },
+                      {"tag": "hr"},
+                      {
+                          "tag": "div",
+                          "text": {
+                              "tag": "lark_md",
+                              "content": review_preview,
+                          },
+                      },
+                      {"tag": "hr"},
+                      {
+                          "tag": "note",
+                          "elements": [
+                              {
+                                  "tag": "plain_text",
+                                  "content": "由 GitHub Actions 自动发送。点击 PR 链接查看完整审查报告。",
+                              }
+                          ],
+                      },
+                  ],
+              },
+          }
+
+          data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+          request = urllib.request.Request(
+              webhook,
+              data=data,
+              headers={"Content-Type": "application/json; charset=utf-8"},
+              method="POST",
+          )
+
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  body = response.read().decode("utf-8", errors="replace")
+                  print(f"Feishu response status: {response.status}")
+                  print(body)
+                  if response.status >= 300:
+                      sys.exit(1)
+          except urllib.error.HTTPError as error:
+              print(f"Feishu HTTP error: {error.code}", file=sys.stderr)
+              print(error.read().decode("utf-8", errors="replace"), file=sys.stderr)
+              sys.exit(1)
+          except urllib.error.URLError as error:
+              print(f"Feishu request failed: {error}", file=sys.stderr)
+              sys.exit(1)
+          PY
