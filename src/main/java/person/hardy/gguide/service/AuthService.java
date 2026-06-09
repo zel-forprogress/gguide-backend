@@ -1,6 +1,7 @@
 package person.hardy.gguide.service;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import person.hardy.gguide.common.util.JWTUtil;
@@ -9,7 +10,10 @@ import person.hardy.gguide.model.entity.User;
 import person.hardy.gguide.repository.UserRepository;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Base64;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class AuthService {
@@ -27,6 +31,9 @@ public class AuthService {
 
     @Autowired
     private JWTUtil jwtUtil;
+
+    @Value("${app.admin.usernames:}")
+    private String adminUsernames;
 
     public User register(String username, String password) {
         if (userRepository.findByUsername(username).isPresent()) {
@@ -79,14 +86,27 @@ public class AuthService {
             return true;
         }
 
-        // Keep the existing development admin account usable after adding the new field.
-        if ("admin".equalsIgnoreCase(user.getUsername())) {
+        if (isConfiguredAdmin(user.getUsername())) {
             user.setAdmin(true);
             userRepository.save(user);
             return true;
         }
 
         return false;
+    }
+
+    private boolean isConfiguredAdmin(String username) {
+        if (username == null || username.isBlank() || adminUsernames == null || adminUsernames.isBlank()) {
+            return false;
+        }
+
+        Set<String> configuredAdmins = Arrays.stream(adminUsernames.split(","))
+                .map(String::trim)
+                .filter(value -> !value.isEmpty())
+                .map(String::toLowerCase)
+                .collect(Collectors.toSet());
+
+        return configuredAdmins.contains(username.toLowerCase());
     }
 
     private String resolveAvatarUrl(User user) {

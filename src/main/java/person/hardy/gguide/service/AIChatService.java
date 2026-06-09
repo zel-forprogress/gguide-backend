@@ -1,5 +1,7 @@
 package person.hardy.gguide.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,11 +26,13 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -42,13 +46,13 @@ public class AIChatService {
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.systemDefault());
 
-    @Value("${ai.api.url}")
+    @Value("${ai.api.url:}")
     private String apiUrl;
 
-    @Value("${ai.api.key}")
+    @Value("${ai.api.key:}")
     private String apiKey;
 
-    @Value("${ai.model}")
+    @Value("${ai.model:}")
     private String model;
 
     @Autowired
@@ -60,8 +64,10 @@ public class AIChatService {
     @Autowired
     private UserRepository userRepository;
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     public ChatResponseDTO chat(String username, ChatRequestDTO request) {
-        List<ChatMessageDTO> messages = request.getMessages();
+        List<ChatMessageDTO> messages = request.getMessages() == null ? List.of() : request.getMessages();
         String lastUserMessage = messages.stream()
                 .filter(message -> "user".equals(message.getRole()))
                 .reduce((first, second) -> second)
@@ -262,10 +268,6 @@ public class AIChatService {
         return title.substring(0, 28) + "...";
     }
 
-    private boolean hasText(String value) {
-        return value != null && !value.trim().isEmpty();
-    }
-
     private RecommendationContext buildRecommendationContext(String userMessage) {
         List<Game> allGames = gameRepository.findAll();
 
@@ -350,10 +352,12 @@ public class AIChatService {
             score += 2;
         }
 
-        for (String category : game.getCategories()) {
-            String normalizedCategory = normalize(category);
-            if (!normalizedCategory.isBlank() && normalizedMessage.contains(normalizedCategory)) {
-                score += 3;
+        if (game.getCategories() != null) {
+            for (String category : game.getCategories()) {
+                String normalizedCategory = normalize(category);
+                if (!normalizedCategory.isBlank() && normalizedMessage.contains(normalizedCategory)) {
+                    score += 3;
+                }
             }
         }
 
@@ -367,7 +371,7 @@ public class AIChatService {
                 "玩什么",
                 "有什么",
                 "几个游戏",
-                "游戏吧",
+                "游戏吗",
                 "game",
                 "recommend",
                 "something to play"
@@ -377,7 +381,7 @@ public class AIChatService {
     }
 
     private List<String> splitKeywords(String normalizedMessage) {
-        return List.of(normalizedMessage.split("[\\s,，。.!！？/]+"));
+        return List.of(normalizedMessage.split("[\\s,，。?!！？/]+"));
     }
 
     private String formatGameList(String title, List<Game> games) {
@@ -390,27 +394,27 @@ public class AIChatService {
 
     private String formatGameInfo(Game game) {
         StringBuilder builder = new StringBuilder();
-        builder.append("游戏名: ").append(getTitleFromI18n(game.getTitleI18n()));
+        builder.append("游戏名：").append(getTitleFromI18n(game.getTitleI18n()));
 
         if (game.getRating() != null) {
-            builder.append("\n评分: ").append(game.getRating()).append("/10");
+            builder.append("\n评分：").append(game.getRating()).append("/10");
         }
 
         if (game.getCategories() != null && !game.getCategories().isEmpty()) {
-            builder.append("\n分类: ").append(String.join(", ", game.getCategories()));
+            builder.append("\n分类：").append(String.join(", ", game.getCategories()));
         }
 
         if (game.getRegionCode() != null && !game.getRegionCode().isBlank() && !"UNKNOWN".equals(game.getRegionCode())) {
-            builder.append("\n地区: ").append(game.getRegionCode());
+            builder.append("\n地区：").append(game.getRegionCode());
         }
 
         if (game.getReleaseDate() != null) {
-            builder.append("\n发售时间: ").append(formatInstant(game.getReleaseDate()));
+            builder.append("\n发售时间：").append(formatInstant(game.getReleaseDate()));
         }
 
         String description = getDescriptionFromI18n(game.getDescriptionI18n());
         if (!description.isBlank()) {
-            builder.append("\n简介: ").append(description);
+            builder.append("\n简介：").append(description);
         }
 
         return builder.toString();
@@ -434,9 +438,10 @@ public class AIChatService {
                 可用游戏平台数据：
                 %s
 
-                当前推荐模式：%s
+                当前推荐模式：
+                %s
                 """.formatted(
-                lastUserMessage == null || lastUserMessage.isBlank() ? "用户没有提供额外问题" : lastUserMessage,
+                hasText(lastUserMessage) ? lastUserMessage : "用户没有提供额外问题",
                 recommendationContext.context(),
                 recommendationContext.mode()
         );
@@ -456,7 +461,7 @@ public class AIChatService {
 
         try {
             HttpClient client = HttpClient.newBuilder()
-                    .connectTimeout(java.time.Duration.ofSeconds(30))
+                    .connectTimeout(Duration.ofSeconds(30))
                     .build();
 
             String requestBody = buildRequestBody(messages, settings.model());
@@ -466,7 +471,7 @@ public class AIChatService {
                     .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + settings.apiKey())
                     .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .timeout(java.time.Duration.ofSeconds(60))
+                    .timeout(Duration.ofSeconds(60))
                     .build();
 
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
@@ -475,10 +480,10 @@ public class AIChatService {
                 return parseAIResponse(response.body());
             }
 
-            log.error("AI API调用失败: {} - {}", response.statusCode(), response.body());
+            log.error("AI API call failed: {} - {}", response.statusCode(), response.body());
             return "抱歉，AI 服务暂时不可用，请稍后再试。";
         } catch (Exception e) {
-            log.error("调用 AI 模型时发生异常", e);
+            log.error("Failed to call AI model", e);
             return "抱歉，调用 AI 服务时出现问题，请稍后再试。";
         }
     }
@@ -496,66 +501,36 @@ public class AIChatService {
         return normalized + "/chat/completions";
     }
 
-    private String buildRequestBody(List<ChatMessageDTO> messages, String activeModel) {
-        StringBuilder builder = new StringBuilder();
-        builder.append("{\"model\":\"").append(escapeJson(activeModel)).append("\",\"messages\":[");
+    private String buildRequestBody(List<ChatMessageDTO> messages, String activeModel) throws Exception {
+        List<Map<String, String>> payloadMessages = messages.stream()
+                .map(message -> {
+                    Map<String, String> payloadMessage = new LinkedHashMap<>();
+                    payloadMessage.put("role", firstText(message.getRole(), "user"));
+                    payloadMessage.put("content", firstText(message.getContent(), ""));
+                    return payloadMessage;
+                })
+                .toList();
 
-        for (int index = 0; index < messages.size(); index++) {
-            ChatMessageDTO message = messages.get(index);
-            builder.append("{\"role\":\"").append(message.getRole()).append("\",\"content\":\"")
-                    .append(escapeJson(message.getContent())).append("\"}");
-            if (index < messages.size() - 1) {
-                builder.append(",");
-            }
-        }
-
-        builder.append("]}");
-        return builder.toString();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("model", activeModel);
+        payload.put("messages", payloadMessages);
+        return objectMapper.writeValueAsString(payload);
     }
 
     private String parseAIResponse(String responseBody) {
         try {
-            int choicesIndex = responseBody.indexOf("\"choices\"");
-            if (choicesIndex == -1) {
-                return "无法解析 AI 响应";
+            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode content = root.path("choices").path(0).path("message").path("content");
+            if (content.isMissingNode() || content.isNull()) {
+                log.error("AI response did not include choices[0].message.content: {}", responseBody);
+                return "无法解析 AI 响应。";
             }
 
-            int messageIndex = responseBody.indexOf("\"message\"", choicesIndex);
-            int contentIndex = responseBody.indexOf("\"content\"", messageIndex);
-            int colonIndex = responseBody.indexOf(":", contentIndex);
-            int quoteStart = responseBody.indexOf("\"", colonIndex) + 1;
-            int quoteEnd = findClosingQuote(responseBody, quoteStart);
-
-            return responseBody.substring(quoteStart, quoteEnd)
-                    .replace("\\n", "\n")
-                    .replace("\\\"", "\"");
+            return content.asText();
         } catch (Exception e) {
-            log.error("解析 AI 响应失败", e);
-            return "解析 AI 响应时发生错误";
+            log.error("Failed to parse AI response", e);
+            return "解析 AI 响应时发生错误。";
         }
-    }
-
-    private int findClosingQuote(String text, int start) {
-        int index = start;
-        while (index < text.length()) {
-            if (text.charAt(index) == '"' && (index == 0 || text.charAt(index - 1) != '\\')) {
-                return index;
-            }
-            index++;
-        }
-        return text.length();
-    }
-
-    private String escapeJson(String text) {
-        if (text == null) {
-            return "";
-        }
-
-        return text.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
     }
 
     private String getTitleFromI18n(Map<String, String> titleI18n) {
@@ -582,6 +557,10 @@ public class AIChatService {
         }
 
         return descriptionI18n.values().stream().findFirst().orElse("");
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
     }
 
     private String normalize(String text) {
