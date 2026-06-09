@@ -286,10 +286,20 @@ public class AIChatService {
             );
         }
 
-        List<Game> featuredGames = pickFeaturedGames(allGames);
+        // 用户没有匹配到具体游戏，判断是否为泛求推荐
+        String normalizedMessage = normalize(userMessage);
+        if (isGenericRecommendationRequest(normalizedMessage)) {
+            List<Game> featuredGames = pickFeaturedGames(allGames);
+            return new RecommendationContext(
+                    "featured",
+                    formatGameList("用户暂时没有提供明确偏好，请基于下面这些平台精选游戏给出 3 到 5 个入门推荐：", featuredGames)
+            );
+        }
+
+        // 用户问题与游戏推荐无关，不注入游戏数据，让 AI 自由回答
         return new RecommendationContext(
-                "featured",
-                formatGameList("用户暂时没有提供明确偏好，请基于下面这些平台精选游戏给出 3 到 5 个入门推荐：", featuredGames)
+                "general",
+                "用户当前问题与游戏推荐无关，请以自然友好的方式直接回答用户的问题，不要强行推荐游戏。"
         );
     }
 
@@ -421,16 +431,15 @@ public class AIChatService {
     }
 
     private String buildSystemPrompt(String lastUserMessage, RecommendationContext recommendationContext) {
-        return """
+        String basePrompt = “””
                 你是 G-Guide 平台的 AI 游戏助手。
-                你的任务是只基于平台提供的真实游戏数据，为用户给出可靠、简洁、有帮助的推荐和说明。
 
                 回答规则：
                 1. 只能推荐下方数据里真实存在的游戏，不要编造平台里没有的作品。
                 2. 优先直接回答用户问题；如果用户只是泛泛地求推荐，请主动给出 3 到 5 个推荐，并说明推荐理由。
-                3. 当用户没有浏览历史、收藏记录或明确偏好时，不要说“无法推荐”；你应该从平台精选游戏中挑选合适的作品给出入门建议。
+                3. 当用户没有浏览历史、收藏记录或明确偏好时，不要说”无法推荐”；你应该从平台精选游戏中挑选合适的作品给出入门建议。
                 4. 如果平台当前确实没有任何可用游戏数据，再明确告诉用户暂无数据。
-                5. 使用中文回答，语气自然、友好，尽量突出“适合谁玩、亮点是什么、为什么推荐”。
+                5. 使用中文回答，语气自然、友好，尽量突出”适合谁玩、亮点是什么、为什么推荐”。
 
                 用户最后一句话：
                 %s
@@ -440,8 +449,32 @@ public class AIChatService {
 
                 当前推荐模式：
                 %s
-                """.formatted(
-                hasText(lastUserMessage) ? lastUserMessage : "用户没有提供额外问题",
+                “””;
+
+        String generalPrompt = “””
+                你是 G-Guide 平台的 AI 助手。
+
+                回答规则：
+                1. 用户当前的问题与游戏推荐无关，请直接、自然地回答用户的问题。
+                2. 不要强行推荐游戏，除非用户明确表达了相关需求。
+                3. 使用中文回答，语气自然、友好。
+
+                用户最后一句话：
+                %s
+
+                当前模式：
+                %s
+                “””;
+
+        if (“general”.equals(recommendationContext.mode())) {
+            return generalPrompt.formatted(
+                    hasText(lastUserMessage) ? lastUserMessage : “用户没有提供额外问题”,
+                    recommendationContext.mode()
+            );
+        }
+
+        return basePrompt.formatted(
+                hasText(lastUserMessage) ? lastUserMessage : “用户没有提供额外问题”,
                 recommendationContext.context(),
                 recommendationContext.mode()
         );
