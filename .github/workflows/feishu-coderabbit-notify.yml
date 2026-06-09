@@ -1,0 +1,83 @@
+name: Send CodeRabbit Review to Feishu
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  notify-feishu:
+    # 只在 CodeRabbit 提交审查时才触发
+    if: github.event.review.user.login == 'coderabbitai[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send review to Feishu
+        env:
+          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          REVIEW_BODY: ${{ github.event.review.body }}
+          REVIEW_STATE: ${{ github.event.review.state }}
+        run: |
+          # 截取审查内容前 3000 字符（飞书卡片有长度限制）
+          REVIEW_PREVIEW=$(echo "$REVIEW_BODY" | head -c 3000)
+
+          # 根据审查状态生成状态文本
+          case "$REVIEW_STATE" in
+            "approved") STATE_TEXT="✅ 通过" ;;
+            "changes_requested") STATE_TEXT="⚠️ 需要修改" ;;
+            "commented") STATE_TEXT="💬 评论" ;;
+            *) STATE_TEXT="$REVIEW_STATE" ;;
+          esac
+
+          # 发送飞书卡片消息
+          curl -s -X POST "$FEISHU_WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d "$(cat <<EOF
+          {
+            "msg_type": "interactive",
+            "card": {
+              "header": {
+                "template": "blue",
+                "title": {
+                  "tag": "plain_text",
+                  "content": "🦊 CodeRabbit 代码审查报告"
+                }
+              },
+              "elements": [
+                {
+                  "tag": "div",
+                  "text": {
+                    "tag": "lark_md",
+                    "content": "**PR：** [${PR_TITLE}](${PR_URL})\n**提交者：** ${PR_AUTHOR}\n**审查结果：** ${STATE_TEXT}"
+                  }
+                },
+                {
+                  "tag": "hr"
+                },
+                {
+                  "tag": "div",
+                  "text": {
+                    "tag": "lark_md",
+                    "content": "${REVIEW_PREVIEW}"
+                  }
+                },
+                {
+                  "tag": "hr"
+                },
+                {
+                  "tag": "note",
+                  "elements": [
+                    {
+                      "tag": "plain_text",
+                      "content": "由 CodeRabbit 自动审查 · 点击 PR 链接查看完整报告"
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+          EOF
+          )"
+
+          echo "Sent to Feishu successfully"
