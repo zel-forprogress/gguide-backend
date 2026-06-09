@@ -35,3 +35,7 @@ build/
 
 ### .env ###
 src/main/resources/.env
+
+### Local run logs ###
+backend-run.log
+backend-run.err.log
