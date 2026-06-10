@@ -7,6 +7,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import person.hardy.gguide.common.util.GameCategoryCatalog;
+import person.hardy.gguide.common.util.GameRegionCatalog;
 import person.hardy.gguide.common.util.LocaleUtil;
 import person.hardy.gguide.model.dto.AISettingsDTO;
 import person.hardy.gguide.model.dto.AISettingsRequestDTO;
@@ -22,20 +24,27 @@ import person.hardy.gguide.repository.AIChatConversationRepository;
 import person.hardy.gguide.repository.GameRepository;
 import person.hardy.gguide.repository.UserRepository;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -74,11 +83,16 @@ public class AIChatService {
                 .map(ChatMessageDTO::getContent)
                 .orElse("");
 
-        RecommendationContext recommendationContext = buildRecommendationContext(lastUserMessage);
+        User user = findUser(username);
+        RecommendationContext recommendationContext = buildRecommendationContext(
+                lastUserMessage,
+                user,
+                request.getContextGameId()
+        );
         String systemPrompt = buildSystemPrompt(lastUserMessage, recommendationContext);
         List<ChatMessageDTO> enhancedMessages = buildEnhancedMessages(systemPrompt, messages);
 
-        String response = callAIModel(enhancedMessages, resolveRuntimeSettings(username));
+        String response = callAIModel(enhancedMessages, resolveRuntimeSettings(user));
         AIChatConversation conversation = saveConversation(
                 username,
                 request.getConversationId(),
@@ -153,8 +167,7 @@ public class AIChatService {
         );
     }
 
-    private AIRuntimeSettings resolveRuntimeSettings(String username) {
-        User user = findUser(username);
+    private AIRuntimeSettings resolveRuntimeSettings(User user) {
         return new AIRuntimeSettings(
                 firstText(user.getAiApiKey(), apiKey),
                 normalizeAIEndpoint(firstText(user.getAiBaseUrl(), apiUrl)),
@@ -268,13 +281,35 @@ public class AIChatService {
         return title.substring(0, 28) + "...";
     }
 
-    private RecommendationContext buildRecommendationContext(String userMessage) {
+    private RecommendationContext buildRecommendationContext(String userMessage, User user, String contextGameId) {
         List<Game> allGames = gameRepository.findAll();
+        String normalizedMessage = normalize(userMessage);
+
+        if (!isGameRelatedRequest(normalizedMessage) && !isCurrentGameQuestion(normalizedMessage)) {
+            return new RecommendationContext(
+                    "general",
+                    "用户当前问题不是明确的游戏推荐、游戏资料查询或当前游戏追问。"
+            );
+        }
 
         if (allGames.isEmpty()) {
             return new RecommendationContext(
                     "empty",
-                    "平台当前还没有可用的游戏数据，请明确告诉用户暂时无法基于游戏库做推荐。"
+                    "平台当前还没有可用的游戏数据。如果用户需要游戏推荐，请明确说明暂时无法基于游戏库推荐。"
+            );
+        }
+
+        Game contextGame = findGameById(contextGameId, allGames);
+        List<Game> favoriteGames = resolveGamesByIds(safeGameIds(user.getFavoriteGameIds()), allGames, 5);
+        List<Game> recentGames = resolveGamesByIds(safeGameIds(user.getRecentlyViewedGameIds()), allGames, 5);
+
+        if (contextGame != null && isCurrentGameQuestion(normalizedMessage)) {
+            List<Game> similarGames = findSimilarGames(contextGame, allGames);
+            return new RecommendationContext(
+                    "current_game",
+                    buildGameContext("用户正在查看的游戏", List.of(contextGame))
+                            + buildGameContext("和当前游戏相近的候选游戏", similarGames)
+                            + buildUserPreferenceContext(favoriteGames, recentGames)
             );
         }
 
@@ -282,30 +317,90 @@ public class AIChatService {
         if (!matchedGames.isEmpty()) {
             return new RecommendationContext(
                     "matched",
-                    formatGameList("以下是和用户问题最相关的候选游戏，请优先基于这些内容回答：", matchedGames)
+                    buildGameContext("和用户问题最相关的候选游戏", matchedGames)
+                            + buildUserPreferenceContext(favoriteGames, recentGames)
             );
         }
 
-        // 用户没有匹配到具体游戏，判断是否为泛求推荐
-        String normalizedMessage = normalize(userMessage);
         if (isGenericRecommendationRequest(normalizedMessage)) {
-            List<Game> featuredGames = pickFeaturedGames(allGames);
+            List<Game> featuredGames = mergeGames(favoriteGames, recentGames, pickFeaturedGames(allGames)).stream()
+                    .limit(CONTEXT_LIMIT)
+                    .collect(Collectors.toList());
             return new RecommendationContext(
                     "featured",
-                    formatGameList("用户暂时没有提供明确偏好，请基于下面这些平台精选游戏给出 3 到 5 个入门推荐：", featuredGames)
+                    buildGameContext("可用于推荐的候选游戏", featuredGames)
+                            + buildUserPreferenceContext(favoriteGames, recentGames)
             );
         }
 
-        // 用户问题与游戏推荐无关，不注入游戏数据，让 AI 自由回答
         return new RecommendationContext(
                 "general",
-                "用户当前问题与游戏推荐无关，请以自然友好的方式直接回答用户的问题，不要强行推荐游戏。"
+                "用户当前问题不是明确的游戏推荐、游戏资料查询或当前游戏追问。"
         );
+    }
+
+    public void streamChat(String username, ChatRequestDTO request, OutputStream outputStream) throws Exception {
+        List<ChatMessageDTO> messages = request.getMessages() == null ? List.of() : request.getMessages();
+        String lastUserMessage = messages.stream()
+                .filter(message -> "user".equals(message.getRole()))
+                .reduce((first, second) -> second)
+                .map(ChatMessageDTO::getContent)
+                .orElse("");
+
+        User user = findUser(username);
+        RecommendationContext recommendationContext = buildRecommendationContext(
+                lastUserMessage,
+                user,
+                request.getContextGameId()
+        );
+        String systemPrompt = buildSystemPrompt(lastUserMessage, recommendationContext);
+        List<ChatMessageDTO> enhancedMessages = buildEnhancedMessages(systemPrompt, messages);
+        AIRuntimeSettings settings = resolveRuntimeSettings(user);
+
+        if (!hasText(settings.apiKey()) || !hasText(settings.apiUrl()) || !hasText(settings.model())) {
+            writeSseEvent(outputStream, "error", Map.of(
+                    "message", "AI 助手还没有可用配置。请先在个人设置的 AI 助手管理里填写 API Key、Base URL 和模型名称。"
+            ));
+            return;
+        }
+
+        StringBuilder assistantResponse = new StringBuilder();
+
+        try {
+            streamAIModel(enhancedMessages, settings, delta -> {
+                assistantResponse.append(delta);
+                writeSseEvent(outputStream, "delta", Map.of("content", delta));
+            });
+
+            if (assistantResponse.isEmpty()) {
+                throw new RuntimeException("AI streaming response was empty");
+            }
+
+            AIChatConversation conversation = saveConversation(
+                    username,
+                    request.getConversationId(),
+                    messages,
+                    assistantResponse.toString()
+            );
+
+            writeSseEvent(outputStream, "done", Map.of(
+                    "conversationId", conversation.getId(),
+                    "title", conversation.getTitle(),
+                    "updatedAt", conversation.getUpdatedAt().toString(),
+                    "messages", conversation.getMessages(),
+                    "messageCount", conversation.getMessages() == null ? 0 : conversation.getMessages().size()
+            ));
+        } catch (Exception e) {
+            log.error("Failed to stream AI response", e);
+            writeSseEvent(outputStream, "error", Map.of(
+                    "message", "抱歉，调用 AI 服务时出现问题，请稍后再试。"
+            ));
+        }
     }
 
     private List<Game> searchRelevantGames(String userMessage, List<Game> allGames) {
         String normalizedMessage = normalize(userMessage);
-        if (normalizedMessage.isBlank() || isGenericRecommendationRequest(normalizedMessage)) {
+        if (normalizedMessage.isBlank()) {
             return List.of();
         }
 
@@ -365,7 +460,11 @@ public class AIChatService {
         if (game.getCategories() != null) {
             for (String category : game.getCategories()) {
                 String normalizedCategory = normalize(category);
-                if (!normalizedCategory.isBlank() && normalizedMessage.contains(normalizedCategory)) {
+                String zhLabel = normalize(GameCategoryCatalog.resolveLabel(category, LocaleUtil.LOCALE_ZH_CN));
+                String enLabel = normalize(GameCategoryCatalog.resolveLabel(category, LocaleUtil.LOCALE_EN_US));
+                if ((!normalizedCategory.isBlank() && normalizedMessage.contains(normalizedCategory))
+                        || (!zhLabel.isBlank() && normalizedMessage.contains(zhLabel))
+                        || (!enLabel.isBlank() && normalizedMessage.contains(enLabel))) {
                     score += 3;
                 }
             }
@@ -390,6 +489,76 @@ public class AIChatService {
         return genericKeywords.stream().anyMatch(normalizedMessage::contains);
     }
 
+    private boolean isGameRelatedRequest(String normalizedMessage) {
+        if (normalizedMessage.isBlank()) {
+            return false;
+        }
+
+        List<String> keywords = List.of(
+                "游戏",
+                "玩",
+                "推荐",
+                "适合",
+                "好玩",
+                "开放世界",
+                "动作",
+                "冒险",
+                "角色扮演",
+                "剧情",
+                "单人",
+                "多人",
+                "合作",
+                "策略",
+                "射击",
+                "解谜",
+                "休闲",
+                "恐怖",
+                "生存",
+                "模拟",
+                "评分",
+                "game",
+                "play",
+                "recommend",
+                "rpg",
+                "action",
+                "adventure",
+                "story",
+                "open world"
+        );
+
+        return keywords.stream().anyMatch(normalizedMessage::contains);
+    }
+
+    private boolean isCurrentGameQuestion(String normalizedMessage) {
+        if (normalizedMessage.isBlank()) {
+            return false;
+        }
+
+        List<String> keywords = List.of(
+                "这个游戏",
+                "这款",
+                "它",
+                "当前游戏",
+                "类似",
+                "适合",
+                "值得",
+                "怎么样",
+                "好玩吗",
+                "玩法",
+                "剧情",
+                "评分",
+                "下载",
+                "预告",
+                "介绍",
+                "similar",
+                "this game",
+                "worth",
+                "like it"
+        );
+
+        return keywords.stream().anyMatch(normalizedMessage::contains);
+    }
+
     private List<String> splitKeywords(String normalizedMessage) {
         return List.of(normalizedMessage.split("[\\s,，。?!！？/]+"));
     }
@@ -402,6 +571,114 @@ public class AIChatService {
         return title + "\n\n" + gameDetails;
     }
 
+    private String buildGameContext(String title, List<Game> games) {
+        if (games == null || games.isEmpty()) {
+            return "";
+        }
+
+        return formatGameList(title + "：", games) + "\n\n";
+    }
+
+    private String buildUserPreferenceContext(List<Game> favoriteGames, List<Game> recentGames) {
+        StringBuilder builder = new StringBuilder();
+
+        if (favoriteGames != null && !favoriteGames.isEmpty()) {
+            builder.append(buildGameContext("用户收藏过的游戏，可用于理解偏好", favoriteGames));
+        }
+
+        if (recentGames != null && !recentGames.isEmpty()) {
+            builder.append(buildGameContext("用户最近浏览过的游戏，可用于理解当前兴趣", recentGames));
+        }
+
+        if (builder.isEmpty()) {
+            builder.append("用户暂时没有收藏或最近浏览记录。\n\n");
+        }
+
+        return builder.toString();
+    }
+
+    private List<Game> resolveGamesByIds(List<String> ids, List<Game> allGames, int limit) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+
+        Map<String, Game> gameMap = allGames.stream()
+                .collect(Collectors.toMap(Game::getId, game -> game, (left, right) -> left));
+
+        return ids.stream()
+                .map(gameMap::get)
+                .filter(game -> game != null)
+                .limit(limit)
+                .collect(Collectors.toList());
+    }
+
+    private List<String> safeGameIds(List<String> gameIds) {
+        return gameIds == null ? List.of() : gameIds;
+    }
+
+    private Game findGameById(String gameId, List<Game> allGames) {
+        if (!hasText(gameId)) {
+            return null;
+        }
+
+        return allGames.stream()
+                .filter(game -> gameId.equals(game.getId()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    @SafeVarargs
+    private final List<Game> mergeGames(List<Game>... groups) {
+        Set<String> seenIds = new LinkedHashSet<>();
+        List<Game> merged = new ArrayList<>();
+
+        for (List<Game> group : groups) {
+            if (group == null) {
+                continue;
+            }
+
+            for (Game game : group) {
+                if (game == null || !hasText(game.getId()) || !seenIds.add(game.getId())) {
+                    continue;
+                }
+                merged.add(game);
+            }
+        }
+
+        return merged;
+    }
+
+    private List<Game> findSimilarGames(Game sourceGame, List<Game> allGames) {
+        if (sourceGame == null || sourceGame.getCategories() == null || sourceGame.getCategories().isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> sourceCategories = new LinkedHashSet<>(sourceGame.getCategories());
+        return allGames.stream()
+                .filter(game -> !sourceGame.getId().equals(game.getId()))
+                .filter(game -> game.getCategories() != null && game.getCategories().stream().anyMatch(sourceCategories::contains))
+                .sorted(Comparator
+                        .comparing((Game game) -> countCategoryOverlap(sourceCategories, game.getCategories())).reversed()
+                        .thenComparing(this::safeRating, Comparator.reverseOrder())
+                        .thenComparing(this::safeReleaseDate, Comparator.reverseOrder()))
+                .limit(5)
+                .collect(Collectors.toList());
+    }
+
+    private int countCategoryOverlap(Set<String> sourceCategories, List<String> categories) {
+        if (categories == null) {
+            return 0;
+        }
+
+        int count = 0;
+        for (String category : categories) {
+            if (sourceCategories.contains(category)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private String formatGameInfo(Game game) {
         StringBuilder builder = new StringBuilder();
         builder.append("游戏名：").append(getTitleFromI18n(game.getTitleI18n()));
@@ -411,11 +688,13 @@ public class AIChatService {
         }
 
         if (game.getCategories() != null && !game.getCategories().isEmpty()) {
-            builder.append("\n分类：").append(String.join(", ", game.getCategories()));
+            builder.append("\n分类：").append(game.getCategories().stream()
+                    .map(category -> GameCategoryCatalog.resolveLabel(category, LocaleUtil.LOCALE_ZH_CN))
+                    .collect(Collectors.joining(", ")));
         }
 
         if (game.getRegionCode() != null && !game.getRegionCode().isBlank() && !"UNKNOWN".equals(game.getRegionCode())) {
-            builder.append("\n地区：").append(game.getRegionCode());
+            builder.append("\n地区：").append(GameRegionCatalog.resolveLabel(game.getRegionCode(), LocaleUtil.LOCALE_ZH_CN));
         }
 
         if (game.getReleaseDate() != null) {
@@ -435,32 +714,34 @@ public class AIChatService {
                 你是 G-Guide 平台的 AI 游戏助手。
 
                 回答规则：
-                1. 只能推荐下方数据里真实存在的游戏，不要编造平台里没有的作品。
-                2. 优先直接回答用户问题；如果用户只是泛泛地求推荐，请主动给出 3 到 5 个推荐，并说明推荐理由。
-                3. 当用户没有浏览历史、收藏记录或明确偏好时，不要说\"无法推荐\"；你应该从平台精选游戏中挑选合适的作品给出入门建议。
-                4. 如果平台当前确实没有任何可用游戏数据，再明确告诉用户暂无数据。
-                5. 使用中文回答，语气自然、友好，尽量突出\"适合谁玩、亮点是什么、为什么推荐\"。
-                6. 排版必须简洁稳定：优先使用短段落；如需列表，只能使用 Markdown 的 "- " 项目符号，每个要点单独一行。
+                1. 只基于下方“平台数据和用户上下文”回答游戏推荐或游戏资料问题，不要编造平台里没有的游戏。
+                2. 如果用户问具体游戏，就围绕对应游戏直接回答；如果用户要推荐，请给出 3 到 5 个游戏，并说明推荐理由。
+                3. 如果有用户收藏或最近浏览记录，可以用它们推断偏好，但不要把这些记录当成用户明确说过的话。
+                4. 如果用户的问题其实不是游戏相关问题，请直接自然回答，不要强行推荐游戏。
+                5. 使用中文回答，语气自然、友好，重点说明适合谁玩、亮点是什么、为什么推荐。
+                6. 排版保持简洁：优先使用短段落；如需列表，只使用 Markdown 的 "- "，每个要点单独一行。
                 7. 不要使用 ◆、◇、•、· 这类装饰符号，不要把多个列表项写在同一行。
 
                 用户最后一句话：
                 %s
 
-                可用游戏平台数据：
+                平台数据和用户上下文：
                 %s
 
-                当前推荐模式：
+                当前模式：
                 %s
                 """;
 
         String generalPrompt = """
                 你是 G-Guide 平台的 AI 助手。
 
+                当前问题没有被识别为游戏推荐、游戏资料查询或当前游戏追问。
+
                 回答规则：
-                1. 用户当前的问题与游戏推荐无关，请直接、自然地回答用户的问题。
-                2. 不要强行推荐游戏，除非用户明确表达了相关需求。
+                1. 直接回答用户问题，不要强行转成游戏推荐。
+                2. 用户明确问到游戏、推荐、收藏、最近浏览或当前游戏时，才围绕 G-Guide 的游戏内容回答。
                 3. 使用中文回答，语气自然、友好。
-                4. 排版必须简洁稳定：优先使用短段落；如需列表，只能使用 Markdown 的 "- " 项目符号，每个要点单独一行。
+                4. 排版保持简洁：优先使用短段落；如需列表，只使用 Markdown 的 "- "，每个要点单独一行。
                 5. 不要使用 ◆、◇、•、· 这类装饰符号，不要把多个列表项写在同一行。
 
                 用户最后一句话：
@@ -501,7 +782,7 @@ public class AIChatService {
                     .connectTimeout(Duration.ofSeconds(30))
                     .build();
 
-            String requestBody = buildRequestBody(messages, settings.model());
+            String requestBody = buildRequestBody(messages, settings.model(), false);
 
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(settings.apiUrl()))
@@ -525,6 +806,60 @@ public class AIChatService {
         }
     }
 
+    private void streamAIModel(
+            List<ChatMessageDTO> messages,
+            AIRuntimeSettings settings,
+            StreamDeltaHandler deltaHandler
+    ) throws Exception {
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(30))
+                .build();
+
+        String requestBody = buildRequestBody(messages, settings.model(), true);
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(settings.apiUrl()))
+                .header("Content-Type", "application/json")
+                .header("Accept", "text/event-stream")
+                .header("X-DashScope-SSE", "enable")
+                .header("Authorization", "Bearer " + settings.apiKey())
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                .timeout(Duration.ofSeconds(120))
+                .build();
+
+        HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        if (response.statusCode() != 200) {
+            String body = new String(response.body().readAllBytes(), StandardCharsets.UTF_8);
+            log.error("AI streaming API call failed: {} - {}", response.statusCode(), body);
+            throw new RuntimeException("AI streaming API call failed");
+        }
+
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(response.body(), StandardCharsets.UTF_8)
+        )) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (!line.startsWith("data:")) {
+                    continue;
+                }
+
+                String data = line.substring("data:".length()).trim();
+                if (data.isBlank()) {
+                    continue;
+                }
+
+                if ("[DONE]".equals(data)) {
+                    break;
+                }
+
+                String delta = parseAIStreamDelta(data);
+                if (hasText(delta)) {
+                    deltaHandler.accept(delta);
+                }
+            }
+        }
+    }
+
     private String normalizeAIEndpoint(String value) {
         if (!hasText(value)) {
             return null;
@@ -538,7 +873,7 @@ public class AIChatService {
         return normalized + "/chat/completions";
     }
 
-    private String buildRequestBody(List<ChatMessageDTO> messages, String activeModel) throws Exception {
+    private String buildRequestBody(List<ChatMessageDTO> messages, String activeModel, boolean stream) throws Exception {
         List<Map<String, String>> payloadMessages = messages.stream()
                 .map(message -> {
                     Map<String, String> payloadMessage = new LinkedHashMap<>();
@@ -551,6 +886,9 @@ public class AIChatService {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("model", activeModel);
         payload.put("messages", payloadMessages);
+        if (stream) {
+            payload.put("stream", true);
+        }
         return objectMapper.writeValueAsString(payload);
     }
 
@@ -568,6 +906,34 @@ public class AIChatService {
             log.error("Failed to parse AI response", e);
             return "解析 AI 响应时发生错误。";
         }
+    }
+
+    private String parseAIStreamDelta(String responseBody) {
+        try {
+            JsonNode root = objectMapper.readTree(responseBody);
+            JsonNode choice = root.path("choices").path(0);
+            JsonNode content = choice.path("delta").path("content");
+            if (!content.isMissingNode() && !content.isNull()) {
+                return content.asText();
+            }
+
+            JsonNode messageContent = choice.path("message").path("content");
+            if (!messageContent.isMissingNode() && !messageContent.isNull()) {
+                return messageContent.asText();
+            }
+
+            return "";
+        } catch (Exception e) {
+            log.warn("Failed to parse AI stream chunk: {}", responseBody, e);
+            return "";
+        }
+    }
+
+    private void writeSseEvent(OutputStream outputStream, String event, Object payload) throws Exception {
+        String data = objectMapper.writeValueAsString(payload);
+        String eventText = "event: " + event + "\n" + "data: " + data + "\n\n";
+        outputStream.write(eventText.getBytes(StandardCharsets.UTF_8));
+        outputStream.flush();
     }
 
     private String getTitleFromI18n(Map<String, String> titleI18n) {
@@ -620,5 +986,10 @@ public class AIChatService {
     }
 
     private record AIRuntimeSettings(String apiKey, String apiUrl, String model) {
+    }
+
+    @FunctionalInterface
+    private interface StreamDeltaHandler {
+        void accept(String delta) throws Exception;
     }
 }

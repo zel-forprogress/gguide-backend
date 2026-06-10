@@ -11,5 +11,6 @@ import java.util.List;
 @AllArgsConstructor
 public class ChatRequestDTO {
     private String conversationId;
+    private String contextGameId;
     private List<ChatMessageDTO> messages;
 }
